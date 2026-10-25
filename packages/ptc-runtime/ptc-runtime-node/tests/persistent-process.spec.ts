@@ -47,7 +47,8 @@ it('keeps an injected process local to the REPL while it runs and after it close
   try {
     const h = await setup()
     expect(globalThis.process === hostProcess).toBe(true)
-    expect(decodePtcJsonWire((await h.run('Object.keys(process.env)')).value).sort()).toEqual(Object.keys(programSpawnEnvironment()).map(k => k).sort())
+    const listed = decodePtcJsonWire((await h.run('Object.keys(process.env)')).value)
+    expect(listed === undefined ? [] : (listed as string[]).slice().sort()).toEqual(Object.keys(programSpawnEnvironment()).map(k => k).sort())
     expect(globalThis.process === hostProcess).toBe(true)
     await h.close()
     expect(globalThis.process === hostProcess).toBe(true)
