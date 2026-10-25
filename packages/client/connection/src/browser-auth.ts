@@ -354,6 +354,9 @@ export class BrowserAuth {
    * @returns true only for an unexpired cookie signed by this activation's loaded secret.
    */
   isAuthenticated(request: ConnectionTrustRequest, secure = false): boolean {
+    // 本地补丁：DSH_WEB_NO_AUTH=1 时跳过浏览器鉴权（Tailscale 内网部署）。
+    // git pull 后若此补丁丢失，重新在 isAuthenticated 开头加这两行即可。
+    if (process.env.DSH_WEB_NO_AUTH === '1') return true
     return this.authenticate(request, secure)?.version === COOKIE_PAYLOAD_VERSION
   }
 
