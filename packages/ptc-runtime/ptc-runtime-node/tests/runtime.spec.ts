@@ -8,6 +8,7 @@ import { SandboxUnavailableError } from '@deepseek-ai/dsh-sandbox'
 import { describe, expect, it, onTestFinished, vi } from 'vitest'
 import type { PtcBindingFunction, PtcBindingNamespace, PtcRunRequest } from '@deepseek-ai/dsh-ptc-runtime'
 import type { Config } from '../src/index.ts'
+import { programSpawnEnvironment } from '../src/environment.ts'
 import { mountRuntime } from './setup.ts'
 
 /** Probe the sandbox independently so Node-runtime launch failures cannot skip enforcement tests. */
@@ -39,13 +40,30 @@ function bindings(functions: Record<string, PtcBindingFunction>): PtcBindingName
 }
 
 describe('Node program process', () => {
-  it('runs erasable TypeScript in the resolved directory with an empty environment', async () => {
+  it('runs erasable TypeScript in the resolved directory with only the minimal spawn environment', async () => {
     const { run, cwd } = await setup()
     const result = await run({ program: 'const n: number = 6; console.log("ready"); return { n: n * 7, cwd: process.cwd(), env: { ...process.env } };', bindings: [] })
     expect(result.error).toBeUndefined()
-    expect(result.value).toEqual({ n: 42, cwd, env: {} })
+    const minimal = programSpawnEnvironment()
+    // CoreFoundation initializes this entry independently when a macOS child starts.
+    if (process.platform === 'darwin') minimal.__CF_USER_TEXT_ENCODING = ''
+    expect(result.value).toEqual({ n: 42, cwd, env: minimal })
     expect(result.logs).toEqual(['ready'])
     expect(result.sandbox).toEqual({ mode: 'danger-full-access', denied: false })
+  })
+
+  it('hands programs a PATH that resolves native executables by bare name', async () => {
+    const { run } = await setup()
+    const probe = process.platform === 'win32'
+      ? 'const {spawnSync}=await import("node:child_process"); const child=spawnSync("cmd",["/d","/c","echo ok"],{encoding:"utf8"}); return {path:process.env.PATH,status:child.status,out:child.stdout};'
+      : 'const {spawnSync}=await import("node:child_process"); const child=spawnSync("sh",["-c","echo ok"],{encoding:"utf8"}); return {path:process.env.PATH,status:child.status,out:child.stdout};'
+    const result = await run({ program: probe, bindings: [] })
+    expect(result.error).toBeUndefined()
+    const value = result.value as { path: string | undefined; status: number | null; out: string }
+    expect(value.path).toBeDefined()
+    expect(value.path).toContain(process.platform === 'win32' ? 'System32' : '/usr/bin')
+    expect(value.status).toBe(0)
+    expect(value.out).toContain('ok')
   })
 
   it('keeps native startup paths available for nested Node creation with an empty model environment', async () => {
@@ -56,13 +74,10 @@ describe('Node program process', () => {
     })
     expect(result.error).toBeUndefined()
     const value = result.value as { env: string[]; status: number | null; error: string | null; childKeys: string[] }
-    expect(value.env).toEqual([])
+    expect(value.env.sort()).toEqual(Object.keys(programSpawnEnvironment()).sort())
     expect(value.status).toBe(0)
     expect(value.error).toBeNull()
-    const nativeKeys = ['PATH', 'PATHEXT', 'SYSTEMROOT', 'WINDIR', 'TEMP', 'TMP']
-    // CoreFoundation initializes this entry independently when a macOS child starts.
-    if (process.platform === 'darwin') nativeKeys.push('__CF_USER_TEXT_ENCODING')
-    expect(value.childKeys.filter(key => !nativeKeys.includes(key.toUpperCase()))).toEqual([])
+    expect(value.childKeys.every(key => key.toUpperCase() in programSpawnEnvironment() || key === '__CF_USER_TEXT_ENCODING')).toBe(true)
   })
 
   it.skipIf(process.platform !== 'win32' || !sandboxUsable)('uses the common Windows grant lock and private native temp without exposing ambient values', async () => {
@@ -86,7 +101,7 @@ describe('Node program process', () => {
     })
     expect(result.error).toBeUndefined()
     const value = result.value as { env: string[]; native: { env: string[]; temp: string }; observed: string }
-    expect(value.env).toEqual([])
+    expect(value.env.sort()).toEqual(Object.keys(programSpawnEnvironment()).sort())
     expect(value.native.env).not.toContain('DSH_TEST_RUNTIME_SECRET')
     expect(value.native.temp.startsWith(`${temp}\\dsh-`)).toBe(true)
     expect(value.observed).toBe('native-temp')
@@ -131,6 +146,12 @@ describe('Node program process', () => {
     expect((await run({ program: 'return { value: undefined }', bindings: [] })).error?.kind).toBe('invalid-output')
   })
 
+  it('names a missing cwd instead of failing the spawn with ENOENT against the executable', async () => {
+    const { runtime, cwd } = await setup()
+    const spec = runtime.resolve({ program: 'return 1', bindings: [] })
+    await expect(runtime.run({ ...spec, cwd: join(cwd, 'does-not-exist') })).rejects.toThrow('does-not-exist')
+  })
+
   it('enforces the combined output cap', async () => {
     const { run } = await setup({ maxOutputBytes: 80 })
     const result = await run({ program: 'console.log("x".repeat(500)); return 42;', bindings: [] })
@@ -142,7 +163,7 @@ describe('Node program process', () => {
   it('uses the default deadline and caps explicit requests', async () => {
     const { runtime } = await setup()
     expect(runtime.timeout).toEqual({ defaultMs: 120_000, maxMs: 600_000 })
-    expect(runtime.executionInstructions).toBe('The program is the body of an async TypeScript function; only erasable syntax is accepted, with no enum or namespaces. Type annotations are advisory. Top-level await and return are supported. Emit output with console.log(...) or return a lossless JSON value. Only printed values and the returned value become program output. Each call runs in a fresh Node process. Node APIs are available through await import(...). Relative paths use the supplied working directory; process.env starts empty. Direct filesystem access follows this execution\'s sandbox policy.')
+    expect(runtime.executionInstructions).toBe('The program is the body of an async TypeScript function; only erasable syntax is accepted, with no enum or namespaces. Type annotations are advisory. Top-level await and return are supported. Emit output with console.log(...) or return a lossless JSON value. Only printed values and the returned value become program output. Each call runs in a fresh Node process. Node APIs are available through await import(...). Relative paths use the supplied working directory; process.env starts with a minimal system PATH only. Direct filesystem access follows this execution\'s sandbox policy.')
     expect(runtime.resolve({ program: '', bindings: [] }).timeoutMs).toBe(120_000)
     expect(runtime.resolve({ program: '', bindings: [], timeoutMs: 900_000 }).timeoutMs).toBe(600_000)
     expect(runtime.resolve({ program: '', bindings: [], timeoutMs: null }).timeoutMs).toBeNull()

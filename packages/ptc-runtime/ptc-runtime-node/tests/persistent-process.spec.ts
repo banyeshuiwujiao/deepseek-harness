@@ -4,6 +4,7 @@ import { createProcessRpc } from '../src/rpc.ts'
 import { runPersistentMain, type PersistentProcess } from '../src/persistent-process.ts'
 import { decodePtcJsonWire, encodePtcJsonWire } from '../src/json-wire.ts'
 import type { ProgramBootData, HostMethods, ProgramMethods } from '../src/protocol.ts'
+import { programSpawnEnvironment } from '../src/environment.ts'
 
 async function setup(limit = 4096, chdir: (cwd: string) => void = () => {}) {
   const first = new PassThrough()
@@ -46,7 +47,7 @@ it('keeps an injected process local to the REPL while it runs and after it close
   try {
     const h = await setup()
     expect(globalThis.process === hostProcess).toBe(true)
-    expect(decodePtcJsonWire((await h.run('Object.keys(process.env)')).value)).toEqual([])
+    expect(decodePtcJsonWire((await h.run('Object.keys(process.env)')).value).sort()).toEqual(Object.keys(programSpawnEnvironment()).map(k => k).sort())
     expect(globalThis.process === hostProcess).toBe(true)
     await h.close()
     expect(globalThis.process === hostProcess).toBe(true)
@@ -62,7 +63,7 @@ it('keeps an environment while capturing each evaluation and binding replies sep
   const result = await h.run('count++; process.stdout.write("raw"); console.log("value", count); await saved({})', declarations)
   expect(decodePtcJsonWire(result.value)).toBe(42)
   expect(h.seen.filter(item => item.type === 'log').map(item => item.text)).toEqual(['raw', 'value 2'])
-  expect(h.state.env).toEqual({})
+  expect(h.state.env).toEqual(programSpawnEnvironment())
   expect(h.nativeEnvironment).toEqual({ PATH: '/native' })
   const failed = await h.run('throw new Error("failed")')
   expect(failed).toMatchObject({ error: { kind: 'exception' } })
