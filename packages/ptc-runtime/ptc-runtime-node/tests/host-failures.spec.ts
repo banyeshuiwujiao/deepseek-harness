@@ -445,8 +445,10 @@ describe('Node runtime host failures', () => {
     h.onBoot(() => { h.complete({}) })
     expect((await h.start()).error).toBeUndefined()
     const env = h.spawn.mock.calls[0]?.[0].env ?? {}
-    expect(Object.hasOwn(env, 'TEMP')).toBe(false)
-    expect(Object.hasOwn(env, 'TMP')).toBe(false)
+    // The launcher hands the child only the minimal spawn environment: a system
+    // TEMP/TMP and the Windows root variables, never ambient credentials.
+    expect(env.TEMP).toBe('fixture-temp-first')
+    expect(env.TMP).toBe('fixture-tmp-second')
     expect(Object.hasOwn(env, 'ELECTRON_RUN_AS_NODE')).toBe(false)
     expect(Object.hasOwn(env, 'DSH_TEST_RUNTIME_SECRET')).toBe(true)
     expect(env.DSH_TEST_RUNTIME_SECRET).toBeUndefined()
@@ -458,10 +460,13 @@ describe('Node runtime host failures', () => {
     expect((await h.start()).error).toBeUndefined()
     const spec = h.spawn.mock.calls[0]?.[0]
     expect(spec?.env?.DSH_PTC_RUNTIME_NODE).toBe('1')
-    expect(Object.hasOwn(spec?.env ?? {}, 'PATH')).toBe(false)
+    // The spawn environment is the minimal system PATH plus the Windows root
+    // variables; no ambient values leak into the program process.
+    expect(typeof spec?.env?.PATH).toBe('string')
+    expect(spec?.env?.PATH).toContain('System32')
     expect(spec?.argv).toEqual([process.execPath, '134217728'])
-    expect(Object.fromEntries(Object.entries(spec?.env ?? {}).filter(([, value]) => value !== undefined)))
-      .toEqual({ DSH_PTC_RUNTIME_NODE: '1', NODE_OPTIONS: '--max-old-space-size=512' })
+    const leaked = Object.fromEntries(Object.entries(spec?.env ?? {}).filter(([key]) => !['PATH', 'PATHEXT', 'SYSTEMROOT', 'WINDIR', 'TEMP', 'TMP', 'DSH_PTC_RUNTIME_NODE', 'NODE_OPTIONS'].includes(key)))
+    expect(leaked).toEqual({})
   })
 })
 
