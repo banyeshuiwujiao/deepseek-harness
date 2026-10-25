@@ -23,7 +23,7 @@ export type { Config } from './config.ts'
 export type { LaunchConfig } from './launch.ts'
 import { OutputLedger } from './output-ledger.ts'
 import { terminateProcess } from './output-stream.ts'
-import { STARTUP_ENVIRONMENT_NAMES } from './environment.ts'
+import { programSpawnEnvironment, STARTUP_ENVIRONMENT_NAMES } from './environment.ts'
 import { decodePtcJsonWire } from './json-wire.ts'
 import { readProgramResult, type ProgramBootData, type ProgramMethods, type HostMethods } from './protocol.ts'
 
@@ -45,7 +45,7 @@ export class NodePtcRuntime extends PtcRuntime {
   override get programFormat(): 'function-body' | 'repl' { return this.inMemory ? 'repl' : 'function-body' }
   override get executionInstructions(): string {
     if (this.inMemory) return this.inMemory.executionInstructions
-    return 'The program is the body of an async TypeScript function; only erasable syntax is accepted, with no enum or namespaces. Type annotations are advisory. Top-level await and return are supported. Emit output with console.log(...) or return a lossless JSON value. Only printed values and the returned value become program output. Each call runs in a fresh Node process. Node APIs are available through await import(...). Relative paths use the supplied working directory; process.env starts empty. Direct filesystem access follows this execution\'s sandbox policy.'
+    return 'The program is the body of an async TypeScript function; only erasable syntax is accepted, with no enum or namespaces. Type annotations are advisory. Top-level await and return are supported. Emit output with console.log(...) or return a lossless JSON value. Only printed values and the returned value become program output. Each call runs in a fresh Node process. Node APIs are available through await import(...). Relative paths use the supplied working directory; process.env starts with a minimal system PATH only. Direct filesystem access follows this execution\'s sandbox policy.'
   }
   private readonly config: ResolvedConfig
   private readonly live = new Set<LiveRun>()
@@ -120,6 +120,9 @@ export class NodePtcRuntime extends PtcRuntime {
       }
       if (spec.sandboxPolicy === undefined) throw new Error('ptc-runtime-node: run requires a resolved sandbox policy')
       if (!isAbsolute(spec.cwd) || (spec.timeoutMs !== null && (!Number.isFinite(spec.timeoutMs) || spec.timeoutMs <= 0 || spec.timeoutMs > this.config.maxTimeoutMs))) throw new Error('ptc-runtime-node: run requires resolved cwd and timeout')
+      // A missing cwd surfaces from the OS as ENOENT blaming the executable, which points debugging at the wrong input (2026-10-25); check it here so the failure names the cwd.
+      const cwdStat = await this.ctx.fs.stat(await this.ctx.fs.resolve(spec.cwd)).catch(() => undefined)
+      if (cwdStat?.type !== 'directory') throw new Error(`ptc-runtime-node: run cwd is missing or not a directory: ${spec.cwd}`)
       const bindings = validateBindings(spec)
       return await this.execute(spec, spec.sandboxPolicy, bindings, controller)
     } finally {
@@ -224,6 +227,7 @@ export class NodePtcRuntime extends PtcRuntime {
       const env: NodeJS.ProcessEnv = Object.fromEntries(Object.keys(process.env)
         .filter(key => !STARTUP_ENVIRONMENT_NAMES.has(key.toUpperCase()) && key.toUpperCase() !== 'ELECTRON_RUN_AS_NODE')
         .map(key => [key, undefined]))
+      Object.assign(env, programSpawnEnvironment())
       if (packaged) {
         env.DSH_PTC_RUNTIME_NODE = '1'
         env.NODE_OPTIONS = heapFlag

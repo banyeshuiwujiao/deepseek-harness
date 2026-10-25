@@ -7,6 +7,7 @@ import type { PtcBindingFunction, PtcRunRequest } from '@deepseek-ai/dsh-ptc-run
 import { describe, expect, it, onTestFinished, vi } from 'vitest'
 import type { Config } from '../src/index.ts'
 import { mountRuntime } from './setup.ts'
+import { programSpawnEnvironment } from '../src/environment.ts'
 
 async function setup(config: Config = {}) {
   const cwd = await mkdtemp(join(tmpdir(), 'dsh-persistent-ptc-'))
@@ -60,7 +61,7 @@ describe('persistent Node REPL', () => {
   it('retains declarations, closures, object identity, and imports across evaluations', async () => {
     const { run, cwd } = await setup()
     expect(await run('const box: { count: number } = { count: 1 }; let alias = box; function increment() { return ++box.count }; const path = await import("node:path");')).toMatchObject({ logs: [] })
-    expect(await run('console.log("second call"); ({ count: increment(), same: box === alias, dir: path.basename(process.cwd()), env: Object.keys(process.env) })')).toMatchObject({ logs: ['second call'], value: { count: 2, same: true, dir: cwd.split(/[\\/]/).at(-1), env: [] } })
+    expect(await run('console.log("second call"); ({ count: increment(), same: box === alias, dir: path.basename(process.cwd()), env: Object.keys(process.env).sort() })')).toMatchObject({ logs: ['second call'], value: { count: 2, same: true, dir: cwd.split(/[\\/]/).at(-1), env: Object.keys(programSpawnEnvironment()).sort() } })
   })
 
   it('retains implicit REPL globals and does not attribute a completed callback exception to a later evaluation', async () => {
