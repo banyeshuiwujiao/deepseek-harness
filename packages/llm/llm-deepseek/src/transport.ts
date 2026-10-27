@@ -27,8 +27,13 @@ export function providerError(raw: unknown, status: number | undefined, headers?
   const detail = `${type} ${typeof error.code === 'string' ? error.code : ''} ${message}`
   let code: string
   if (status === 401 || status === 403 || ['authentication_error', 'permission_error'].includes(type)) code = 'AUTH'
+  // The provider's own classification wins over the wording of the code it
+  // reuses: gateways answer TPM/RPM ceilings with 429 + `insufficient_quota`
+  // while typing the failure as a rate limit. Such a rejection is transient
+  // and belongs to the RATE_LIMIT policy (retryable), not to QUOTA.
+  else if (type === 'rate_limit_error' || type === 'rate_limit_exceeded') code = 'RATE_LIMIT'
   else if (isQuotaExceededError(detail) || status === 402) code = 'QUOTA'
-  else if (status === 429 || type === 'rate_limit_error') code = 'RATE_LIMIT'
+  else if (status === 429) code = 'RATE_LIMIT'
   else if (isContextWindowExceededError(detail)) code = 'CONTEXT_WINDOW_EXCEEDED'
   else if (status === 400 || status === 413 || type === 'invalid_request_error') code = 'INVALID_REQUEST'
   else if ((status !== undefined && status >= 500) || ['api_error', 'overloaded_error'].includes(type)) code = 'SERVER'
