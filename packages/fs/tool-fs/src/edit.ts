@@ -9,6 +9,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import type { DiffCallView, DiffResultView, ToolResult } from '@deepseek-ai/dsh-tools'
 import type {} from '@deepseek-ai/dsh-fs'
+import { escalationRetryGuidance } from '@deepseek-ai/dsh-sandbox'
 import { computeHunkDiffs, diffsFromMeta } from './diff.ts'
 import { remediateFsError } from './error.ts'
 import { mutationResult } from './mutation-result.ts'
@@ -79,7 +80,8 @@ export function applyEditTool(ctx: Context, sandbox: FsSandboxController): void 
     order: ctx.systemPrompt.getSectionOrder('TOOL_EDIT'),
     text: ({ scope }) => ctx.tools.get('edit', scope) === undefined
       ? ''
-      : 'Read a file before editing it (the default fs-observation-policy requires it), unless you just created or edited it in this session.',
+      : 'Read a file before editing it (the default fs-observation-policy requires it), unless you just created or edited it in this session.'
+        + (sandbox.escalationModes.length > 0 ? ' ' + escalationRetryGuidance('operation') : ''),
   })
 
   ctx.tools.register(defineTool({

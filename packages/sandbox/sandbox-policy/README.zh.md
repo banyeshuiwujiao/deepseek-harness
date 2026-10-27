@@ -116,19 +116,19 @@ kind: "package-reference"
 ##### 只读
 
 ```markdown
-Current DSH file policy: read-only. Any available operation enforced by the DSH file sandbox cannot modify files in the standing mode. Do not refuse a required modification from this policy alone: try an available tool normally and follow any denial and escalation guidance it returns.
+Current DSH file policy: read-only. Any available operation enforced by the DSH file sandbox cannot modify files in the standing mode. Do not refuse a required modification from this policy alone: try an available tool normally and follow any denial and escalation guidance it returns. A file-sandbox denial is not a refusal: retry the same operation once with the `sandbox_permissions` parameter set to the narrowest wider mode that suffices, plus a one-sentence `justification`. The tool schema already carries both arguments, and the escalation asks the user for approval.
 ```
 
 ##### 工作区写入
 
 ```markdown
-Current DSH file policy: workspace-write. Any available operation enforced by the DSH file sandbox may modify files under the session workspace: "<workspace root>". Some platform temporary areas may also be writable.
+Current DSH file policy: workspace-write. Any available operation enforced by the DSH file sandbox may modify files under the session workspace: "<workspace root>". Some platform temporary areas may also be writable. Do not refuse a required modification from this policy alone: try an available tool normally and follow any denial and escalation guidance it returns. A file-sandbox denial is not a refusal: retry the same operation once with the `sandbox_permissions` parameter set to the narrowest wider mode that suffices, plus a one-sentence `justification`. The tool schema already carries both arguments, and the escalation asks the user for approval.
 ```
 
 ##### 带额外目录的工作区写入
 
 ```markdown
-Current DSH file policy: workspace-write. Any available operation enforced by the DSH file sandbox may modify files under the session workspace: "<workspace root>". Additional writable directories: ["/repo/.git"]. Some platform temporary areas may also be writable.
+Current DSH file policy: workspace-write. Any available operation enforced by the DSH file sandbox may modify files under the session workspace: "<workspace root>". Additional writable directories: ["/repo/.git"]. Some platform temporary areas may also be writable. Do not refuse a required modification from this policy alone: try an available tool normally and follow any denial and escalation guidance it returns. A file-sandbox denial is not a refusal: retry the same operation once with the `sandbox_permissions` parameter set to the narrowest wider mode that suffices, plus a one-sentence `justification`. The tool schema already carries both arguments, and the escalation asks the user for approval.
 ```
 
 ##### 完全访问

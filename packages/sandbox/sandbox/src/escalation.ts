@@ -98,6 +98,24 @@ export function sandboxPermissionsDescription(subject: string): string {
 }
 
 /**
+ * The model-facing escalation CONTRACT: a policy denial is retryable, and the
+ * lever is already in the tool's own schema. It rides every place that can
+ * produce a denial — the standing-policy context and each enforcing tool's
+ * system-prompt section — because a denial that only the tool RESULT explains
+ * is easy for a model to misread as "this tool cannot do that" (observed: an
+ * agent reported a tool as lacking the parameter while its schema carried it).
+ * @param subject - the family's noun for the denied action (`command` for
+ *   bash, `operation` for a filesystem mutation).
+ * @returns the guidance paragraph, exactly as the model sees it.
+ */
+export function escalationRetryGuidance(subject: string): string {
+  return `A file-sandbox denial is not a refusal: retry the same ${subject} once with the `
+    + '`sandbox_permissions` parameter set to the narrowest wider mode that suffices, plus a '
+    + 'one-sentence `justification`. The tool schema already carries both arguments, and the '
+    + 'escalation asks the user for approval.'
+}
+
+/**
  * The closed outcome vocabulary of one escalation ask — structurally identical
  * to the approval seam's `ApprovalOutcome` so an `ApprovalService.request`
  * return is assignable without this package importing it.

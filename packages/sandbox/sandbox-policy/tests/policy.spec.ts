@@ -10,6 +10,7 @@ import { join, resolve, sep } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
+import { escalationRetryGuidance } from '@deepseek-ai/dsh-sandbox'
 import { SESSION_FORMAT_VERSION, Session, SessionId } from '@deepseek-ai/dsh-session'
 import SandboxPolicyService, { SANDBOX_MODES, setSandboxMode } from '@deepseek-ai/dsh-sandbox-policy'
 import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
@@ -195,12 +196,30 @@ describe('sandbox:policy request context', () => {
     const ctx = await promptMounted({ mode, workspaceRoot: '/fallback' })
     const workspaceRoot = '/projects/../projects/current'
     const expected = {
-      'read-only': 'Current DSH file policy: read-only. Any available operation enforced by the DSH file sandbox cannot modify files in the standing mode. Do not refuse a required modification from this policy alone: try an available tool normally and follow any denial and escalation guidance it returns.',
-      'workspace-write': `Current DSH file policy: workspace-write. Any available operation enforced by the DSH file sandbox may modify files under the session workspace: ${JSON.stringify(workspaceRoot)}. Some platform temporary areas may also be writable.`,
+      'read-only': 'Current DSH file policy: read-only. Any available operation enforced by the DSH file sandbox cannot modify files in the standing mode. Do not refuse a required modification from this policy alone: try an available tool normally and follow any denial and escalation guidance it returns. '
+        + escalationRetryGuidance('operation'),
+      'workspace-write': `Current DSH file policy: workspace-write. Any available operation enforced by the DSH file sandbox may modify files under the session workspace: ${JSON.stringify(workspaceRoot)}. Some platform temporary areas may also be writable. `
+        + 'Do not refuse a required modification from this policy alone: try an available tool normally and follow any denial and escalation guidance it returns. '
+        + escalationRetryGuidance('operation'),
       'danger-full-access': 'Current DSH file policy: danger-full-access. The DSH file sandbox does not restrict file modifications by available operations.',
     } as const
 
     expect(await policyContext(ctx, session(`sess-${mode}`, '/projects/../projects/current'))).toBe(expected[mode])
+  })
+
+  it('tells a confined session that a denial is retryable with the escalation arguments', async () => {
+    // Regression: a workspace-write session whose agent hit a boundary outside the
+    // workspace read the denial as "this tool cannot do that" and reported the
+    // operation as impossible, while its own tool schema carried both arguments.
+    // The confined modes must name the sanctioned retry in the every-turn context.
+    for (const mode of ['read-only', 'workspace-write'] as const) {
+      const ctx = await promptMounted({ mode, workspaceRoot: '/fallback' })
+      const context = await policyContext(ctx, session(`sess-escalation-${mode}`, '/projects/current'))
+      expect(context).toContain('`sandbox_permissions`')
+      expect(context).toContain('`justification`')
+      expect(context).toContain('not a refusal')
+      expect(context).toContain('asks the user for approval')
+    }
   })
 
   it('renders explicit extra writable directories under workspace-write', async () => {
@@ -210,7 +229,9 @@ describe('sandbox:policy request context', () => {
       additionalWritableRoots: ['/projects/shared/.git', '/projects/shared/worktrees'],
     })
     expect(await policyContext(ctx, session('sess-extra', '/projects/current'))).toBe(
-      `Current DSH file policy: workspace-write. Any available operation enforced by the DSH file sandbox may modify files under the session workspace: ${JSON.stringify('/projects/current')}. Additional writable directories: ["/projects/shared/.git","/projects/shared/worktrees"]. Some platform temporary areas may also be writable.`,
+      `Current DSH file policy: workspace-write. Any available operation enforced by the DSH file sandbox may modify files under the session workspace: ${JSON.stringify('/projects/current')}. Additional writable directories: ["/projects/shared/.git","/projects/shared/worktrees"]. Some platform temporary areas may also be writable. `
+      + 'Do not refuse a required modification from this policy alone: try an available tool normally and follow any denial and escalation guidance it returns. '
+      + escalationRetryGuidance('operation'),
     )
   })
 
@@ -221,7 +242,8 @@ describe('sandbox:policy request context', () => {
       additionalWritableRoots: ['/projects/shared/.git'],
     })
     expect(await policyContext(ctx, session('sess-readonly-extra', '/projects/current'))).toBe(
-      'Current DSH file policy: read-only. Any available operation enforced by the DSH file sandbox cannot modify files in the standing mode. Do not refuse a required modification from this policy alone: try an available tool normally and follow any denial and escalation guidance it returns.',
+      'Current DSH file policy: read-only. Any available operation enforced by the DSH file sandbox cannot modify files in the standing mode. Do not refuse a required modification from this policy alone: try an available tool normally and follow any denial and escalation guidance it returns. '
+      + escalationRetryGuidance('operation'),
     )
   })
 
@@ -257,7 +279,9 @@ describe('sandbox:policy request context', () => {
     expect(await policyContext(ctx, active)).toBe(danger)
 
     setSandboxMode(active, 'workspace-write')
-    expect(await policyContext(ctx, active)).toBe(`Current DSH file policy: workspace-write. Any available operation enforced by the DSH file sandbox may modify files under the session workspace: ${JSON.stringify('/projects/current')}. Some platform temporary areas may also be writable.`)
+    expect(await policyContext(ctx, active)).toBe(`Current DSH file policy: workspace-write. Any available operation enforced by the DSH file sandbox may modify files under the session workspace: ${JSON.stringify('/projects/current')}. Some platform temporary areas may also be writable. `
+      + 'Do not refuse a required modification from this policy alone: try an available tool normally and follow any denial and escalation guidance it returns. '
+      + escalationRetryGuidance('operation'))
   })
 
   it('reconstructs resumed policy from the session log and omits diagnostics without an agent', async () => {

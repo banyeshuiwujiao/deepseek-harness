@@ -32,7 +32,7 @@ import type { JobId, JobRegistry, JobView } from '@deepseek-ai/dsh-jobs'
 import type {} from '@deepseek-ai/dsh-shell-env'
 import type {} from '@deepseek-ai/dsh-user-approval'
 import type { SandboxExecutionPolicy, SandboxMode } from '@deepseek-ai/dsh-sandbox'
-import { ESCALATION_TARGETS, approveEscalation, sandboxPermissionsDescription, validateEscalationArgs } from '@deepseek-ai/dsh-sandbox'
+import { ESCALATION_TARGETS, approveEscalation, escalationRetryGuidance, sandboxPermissionsDescription, validateEscalationArgs } from '@deepseek-ai/dsh-sandbox'
 import type { SandboxPolicyService } from '@deepseek-ai/dsh-sandbox-policy'
 import type { ShellExecRequest, ShellExecSpec, ShellExecution, ShellRunResult } from '@deepseek-ai/dsh-shell'
 import { parseExitStatus } from '@deepseek-ai/dsh-shell'
@@ -118,7 +118,7 @@ function validatePwshArgs(args: PwshToolArgs): void {
 }
 /* jscpd:ignore-end */
 
-function pwshDescription(windowsSandbox: boolean): string {
+function pwshDescription(confining: boolean): string {
   const base = 'Execute a PowerShell command (`pwsh -Command`) and return its stdout/stderr. '
     + 'Each call runs in a fresh pwsh process; pass `workdir` instead of using `cd`. Paths use native Windows form (`C:\\...`); read environment '
     + 'variables with `$env:NAME`. '
@@ -128,15 +128,23 @@ function pwshDescription(windowsSandbox: boolean): string {
     + 'Provide `description` before `command` in the arguments. '
     + 'Before any delete or move, verify that the resolved absolute target path is the intended one; never run it against a computed path you have not checked. '
     + 'Do not assign to automatic variables such as `$HOME`; variable names are case-insensitive, so `$home` is the same read-only variable. '
-    + 'Commands may run under a file sandbox; a blocked file operation is reported as `[sandbox: file access denied under <mode> mode]`, a policy denial: do not retry another way.'
-  if (!windowsSandbox) return base
-  // The language-mode and named-pipe contracts below are Windows-restricted-token
-  // behavior, but the gate is 'any confining executor is mounted'
-  // (escalation fields advertised). Every shipped composition pairing tool-pwsh
-  // with a confining executor is win32-only, so the gate is equivalent. A POSIX
-  // pwsh-sandbox composition must gate both sentences on the platform instead
-  // (tracked in the pwsh-tool-and-executor Agent Note).
-  return base + ' Under the Windows sandbox, read-only pwsh runs in PowerShell ConstrainedLanguage mode, while '
+    + 'Commands may run under a file sandbox; a blocked file operation is reported as `[sandbox: file access denied under <mode> mode]` — a policy denial, not a failure.'
+  if (!confining) return base
+  // The escalation clause belongs to the CONFINED branch only: it names the
+  // `sandbox_permissions` argument, which is advertised exactly when a
+  // confining executor is mounted. Naming it in a sandbox-less composition
+  // would advertise a parameter the schema does not carry (the model then
+  // reports the tool as lacking a field it was never offered).
+  return base + ' Retry the same command once with `sandbox_permissions` set to the narrowest wider mode that suffices, '
+    + 'plus a one-sentence `justification` — the tool schema already carries both arguments and the escalation asks the user for approval. '
+    + 'Do not work around the policy by another route. '
+    // The language-mode and named-pipe contracts below are Windows-restricted-token
+    // behavior, but the gate is 'any confining executor is mounted'
+    // (escalation fields advertised). Every shipped composition pairing tool-pwsh
+    // with a confining executor is win32-only, so the gate is equivalent. A POSIX
+    // pwsh-sandbox composition must gate both sentences on the platform instead
+    // (tracked in the pwsh-tool-and-executor Agent Note).
+    + 'Under the Windows sandbox, read-only pwsh runs in PowerShell ConstrainedLanguage mode, while '
     + 'workspace-write stays in FullLanguage unless host policy says otherwise. In read-only, prefer cmdlets and core types (`[string]`, `[datetime]`, `[regex]`, `[guid]`); '
     + '.NET static calls (`[System.IO.*]::`, `[math]::`), `Add-Type`, COM objects, and reflection fail '
     + 'with "only core types" errors. `-f` formatting, property access, and core cmdlets work. '
@@ -265,7 +273,8 @@ export function apply(ctx: Context, config: Config = {}): void {
     name: 'tool:pwsh',
     order: ctx.systemPrompt.getSectionOrder('TOOL_PWSH'),
     text: 'Non-zero exits are reported as `[exit code: N]` markers; investigate failures before moving on. '
-      + 'On Windows a killed process settles as `[exit code: 1]` without a signal marker; treat a bare exit 1 after an interruption as a termination, not a command failure.',
+      + 'On Windows a killed process settles as `[exit code: 1]` without a signal marker; treat a bare exit 1 after an interruption as a termination, not a command failure.'
+      + (escalationModes.length > 0 ? ' ' + escalationRetryGuidance('command') : ''),
   })
 
   /**

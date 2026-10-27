@@ -673,6 +673,24 @@ describe('sandbox escalation through ctx.approval', () => {
     expect(schema.parameters.properties).not.toHaveProperty('sandbox_permissions')
   })
 
+  it('names the sanctioned retry in the tool description and the every-turn prompt', async () => {
+    // Regression: an agent met a file-sandbox denial, read "do not retry another
+    // way" as "this cannot be done", and reported the operation as impossible
+    // while its own schema carried both escalation arguments. The description
+    // and the prompt must name the ONE retry the policy allows.
+    const { ctx } = await setupSandboxed()
+    const schema = ctx.tools.schemas().find(item => item.name === 'pwsh')!
+    expect(schema.description).toContain('a policy denial, not a failure')
+    expect(schema.description).toContain('`sandbox_permissions`')
+    expect(schema.description).toContain('`justification`')
+    expect(schema.description).toContain('asks the user for approval')
+    expect(schema.description).not.toContain('a policy denial: do not retry another way')
+    const prompt = renderPrompt(await ctx.systemPrompt.assemble())
+    expect(prompt).toContain('not a refusal')
+    expect(prompt).toContain('`sandbox_permissions`')
+    expect(prompt).toContain('`justification`')
+  })
+
   it('rejects injected escalation without a sandbox and narrower escalation without prompting', async () => {
     const plain = await setup()
     expect(text(await call(plain.ctx, 'pwsh', escalate))).toContain('not available in this composition')

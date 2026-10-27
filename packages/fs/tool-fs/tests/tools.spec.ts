@@ -1142,6 +1142,26 @@ describe('sandbox escalation API (write/edit)', () => {
     expect(result.isError).toBe(true)
     expect(text(result)).toContain('not available in this composition')
   })
+
+  it('tells the model that a denial is retryable when the escalation fields are advertised', async () => {
+    // Regression: an agent read a file-sandbox denial as "this tool cannot do
+    // that" and reported the operation as impossible, while its own schema
+    // carried both arguments. The every-turn prompt must name the retry.
+    const { ctx } = await setupConfining()
+    const prompt = renderPrompt(await ctx.systemPrompt.assemble())
+    expect(prompt).toContain('`sandbox_permissions`')
+    expect(prompt).toContain('`justification`')
+    expect(prompt).toContain('not a refusal')
+    expect(prompt).toContain('asks the user for approval')
+    // Both mutating tools carry it.
+    expect(prompt.match(/not a refusal/g)).toHaveLength(2)
+  })
+
+  it('keeps the retry guidance out of the prompt when no escalation field is advertised', async () => {
+    const { ctx } = await setup()
+    const prompt = renderPrompt(await ctx.systemPrompt.assemble())
+    expect(prompt).not.toContain('not a refusal')
+  })
 })
 
 /** Create a real per-agent scope over the mounted tool plugins. */
