@@ -9,7 +9,7 @@ import { Context } from '@deepseek-ai/cordis'
 import { ToolCallId } from '@deepseek-ai/dsh-llm'
 import { ShellExecutor } from '@deepseek-ai/dsh-shell'
 import type { ShellExecRequest, ShellExecSpec, ShellExecution, ShellProcess, ShellRunResult } from '@deepseek-ai/dsh-shell'
-import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
+import SystemPrompt, { renderPrompt } from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime, { TOOL_ABORTED, TOOL_ABORTED_BEFORE_DISPATCH } from '@deepseek-ai/dsh-tools'
 import AgentRegistry from '@deepseek-ai/dsh-agent'
 import type { Agent } from '@deepseek-ai/dsh-agent'
@@ -757,6 +757,24 @@ describe('sandbox escalation through the generic task producer', () => {
     ]) {
       expect((await call(ctx, 'bash', args)).isError).toBe(true)
     }
+  })
+
+  it('names the sanctioned retry in the tool description and the every-turn prompt', async () => {
+    // Regression: an agent met a file-sandbox denial, read "do not retry another
+    // way" as "this cannot be done", and reported the operation as impossible
+    // while its own schema carried both escalation arguments.
+    const { ctx } = await setupSandboxed()
+    const schema = ctx.tools.schemas().find(item => item.name === 'bash')!
+    expect(schema.description).toContain('a policy denial, not a failure')
+    expect(schema.description).toContain('`sandbox_permissions`')
+    expect(schema.description).toContain('`justification`')
+    expect(schema.description).toContain('asks the user for approval')
+    expect(schema.description).not.toContain('a policy denial: do not retry another way')
+
+    const prompt = renderPrompt(await ctx.systemPrompt.assemble())
+    expect(prompt).toContain('not a refusal')
+    expect(prompt).toContain('`sandbox_permissions`')
+    expect(prompt).toContain('`justification`')
   })
 
   it.each([undefined, '', ' \t\n'])('runs without escalation for justification %j', async (justification) => {

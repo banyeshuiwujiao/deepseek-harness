@@ -23,7 +23,7 @@ import type { JobId, JobRegistry, JobView } from '@deepseek-ai/dsh-jobs'
 import type {} from '@deepseek-ai/dsh-user-approval'
 import type {} from '@deepseek-ai/dsh-shell-env'
 import type { SandboxExecutionPolicy, SandboxMode } from '@deepseek-ai/dsh-sandbox'
-import { ESCALATION_TARGETS, approveEscalation, sandboxPermissionsDescription, validateEscalationArgs } from '@deepseek-ai/dsh-sandbox'
+import { ESCALATION_TARGETS, approveEscalation, escalationRetryGuidance, sandboxPermissionsDescription, validateEscalationArgs } from '@deepseek-ai/dsh-sandbox'
 import type { SandboxPolicyService } from '@deepseek-ai/dsh-sandbox-policy'
 import { DSH_ENV_PREFIX } from '@deepseek-ai/dsh-shell'
 import type { ShellExecRequest, ShellExecSpec, ShellExecution, ShellRunResult } from '@deepseek-ai/dsh-shell'
@@ -87,15 +87,23 @@ function validateBashArgs(args: BashToolArgs, effectiveMode: SandboxMode | undef
   validateEscalationArgs(args.sandbox_permissions, justification)
 }
 
-function bashDescription(): string {
-  return 'Execute a bash command (`bash -c`) and return its stdout/stderr. '
+function bashDescription(confining: boolean): string {
+  const base = 'Execute a bash command (`bash -c`) and return its stdout/stderr. '
     + 'Each call runs in a fresh shell; pass `workdir` instead of using `cd`. '
     + `Managed \`$${DSH_ENV_PREFIX}*\` variables expose current harness environment facts. `
     + 'Long output is truncated to its tail; the full output is saved to a file whose path is reported when available. '
     + 'Provide `description` before `command` in the arguments. '
     + 'Before any delete or move, verify that the resolved absolute target path is the intended one; never run it against a computed path you have not checked. '
     + 'An unset variable expands to an empty string, so guard variables in such paths with `${VAR:?}`. '
-    + 'Commands may run under a file sandbox; a blocked file operation is reported as `[sandbox: file access denied under <mode> mode]`, a policy denial: do not retry another way.'
+    + 'Commands may run under a file sandbox; a blocked file operation is reported as `[sandbox: file access denied under <mode> mode]` — a policy denial, not a failure.'
+  if (!confining) return base
+  // The escalation clause belongs to the CONFINED branch only: it names the
+  // `sandbox_permissions` argument, which is advertised exactly when a
+  // confining executor is mounted. Naming it in a sandbox-less composition
+  // would advertise a parameter the schema does not carry.
+  return base + ' Retry the same command once with `sandbox_permissions` set to the narrowest wider mode that suffices, '
+    + 'plus a one-sentence `justification` — the tool schema already carries both arguments and the escalation asks the user for approval. '
+    + 'Do not work around the policy by another route.'
 }
 
 /**
@@ -251,7 +259,8 @@ export function apply(ctx: Context, config: Config = {}): void {
   ctx.systemPrompt.section({
     name: 'tool:bash',
     order: ctx.systemPrompt.getSectionOrder('TOOL_BASH'),
-    text: 'Check the [exit code: N] marker on every bash result; investigate failures before moving on.',
+    text: 'Check the [exit code: N] marker on every bash result; investigate failures before moving on.'
+      + (escalationModes.length > 0 ? ' ' + escalationRetryGuidance('command') : ''),
   })
 
   /**
@@ -367,7 +376,7 @@ export function apply(ctx: Context, config: Config = {}): void {
     }
     return defineTool({
       name: 'bash',
-      description: bashDescription(),
+      description: bashDescription(escalationModes.length > 0),
       parameters: {
         description: {
           type: 'string',
