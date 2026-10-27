@@ -3,6 +3,7 @@ import { Duplex, PassThrough } from 'node:stream'
 import { setImmediate as nextTurn } from 'node:timers/promises'
 import { expect, it, onTestFinished, vi } from 'vitest'
 import { createProcessRpc } from '../src/rpc.ts'
+import { programSpawnEnvironment } from '../src/environment.ts'
 import { runNodeMain, type ProgramProcess } from '../src/process.ts'
 import type { HostMethods, ProgramBootData, ProgramMethods } from '../src/protocol.ts'
 import { decodePtcJsonWire, encodePtcJsonWire } from '../src/json-wire.ts'
@@ -52,9 +53,9 @@ it('clears the environment and returns a binding result after captured output', 
   const result = await h.run('const doubled = await tools.echo({ n: 21 }); console.log("got", doubled); return { doubled };')
   expect(decodePtcJsonWire(result.value)).toEqual({ doubled: 42 })
   expect(h.logs).toEqual(['got 42'])
-  expect(h.state.env).toEqual({})
+  expect(h.state.env).toEqual(programSpawnEnvironment())
   expect(h.state.env).not.toBe(h.nativeEnvironment)
-  expect(Object.getPrototypeOf(h.state.env)).toBeNull()
+  expect(Object.getPrototypeOf(h.state.env)).toBe(Object.prototype)
   expect(h.nativeEnvironment).toEqual({ SystemRoot: 'C:\\Windows', PATH: '/native/bin', TMP: 'C:\\sandbox-temp', TEMP: 'C:\\sandbox-temp' })
   h.peer.$close()
   await h.main

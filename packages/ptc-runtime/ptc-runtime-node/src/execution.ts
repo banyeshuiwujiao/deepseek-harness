@@ -149,7 +149,7 @@ function resolveMode(config: ResolvedConfig): ExecutionMode {
     case 'per-call': return {
       format: 'function-body',
       retainsState: false,
-      executionInstructions: 'The program is the body of an async TypeScript function; only erasable syntax is accepted, with no enum or namespaces. Type annotations are advisory. Top-level await and return are supported. Emit output with console.log(...) or return a lossless JSON value. Only printed values and the returned value become program output. Each call runs in a fresh Node process. Node APIs are available through await import(...). Relative paths use the supplied working directory; process.env starts empty. Direct filesystem access follows this execution\'s sandbox policy.',
+      executionInstructions: 'The program is the body of an async TypeScript function; only erasable syntax is accepted, with no enum or namespaces. Type annotations are advisory. Top-level await and return are supported. Emit output with console.log(...) or return a lossless JSON value. Only printed values and the returned value become program output. Each call runs in a fresh Node process. Node APIs are available through await import(...). Relative paths use the supplied working directory; process.env starts with a minimal system PATH only. Direct filesystem access follows this execution\'s sandbox policy.',
       stripTypes(program) {
         const stripped = stripTypeScriptTypes(STRIP_PREFIX + program + STRIP_SUFFIX)
         return stripped.slice(STRIP_PREFIX.length, stripped.length - STRIP_SUFFIX.length)
@@ -158,7 +158,7 @@ function resolveMode(config: ResolvedConfig): ExecutionMode {
     case 'persistent-in-memory': return {
       format: 'repl',
       retainsState: true,
-      executionInstructions: 'The program contains TypeScript REPL statements; only erasable syntax is accepted, with no enum or namespaces. Type annotations are advisory. Top-level declarations and await are supported; top-level return is not supported. Emit output with console.log(...) or a final lossless JSON expression. Only printed values and that final expression become program output. Variables, functions, and imported modules remain in memory for this Agent across calls. Use await import(...) for modules. Direct filesystem access follows this execution\'s sandbox policy; process.env starts empty. ' + RETAINED_STATE_INSTRUCTIONS,
+      executionInstructions: 'The program contains TypeScript REPL statements; only erasable syntax is accepted, with no enum or namespaces. Type annotations are advisory. Top-level declarations and await are supported; top-level return is not supported. Emit output with console.log(...) or a final lossless JSON expression. Only printed values and that final expression become program output. Variables, functions, and imported modules remain in memory for this Agent across calls. Use await import(...) for modules. Direct filesystem access follows this execution\'s sandbox policy; process.env starts with a minimal system PATH only. ' + RETAINED_STATE_INSTRUCTIONS,
       stripTypes: stripTypeScriptTypes,
     }
     case 'vm-script': {
@@ -173,7 +173,7 @@ function resolveMode(config: ResolvedConfig): ExecutionMode {
       return {
         format: 'script',
         retainsState: config.scriptPersistence,
-        executionInstructions: 'The program contains TypeScript script statements; only erasable syntax is accepted, with no enum or namespaces. Type annotations are advisory. Top-level declarations and await are supported; top-level return is not supported. Emit output with console.log(...) or a final lossless JSON expression. The final expression is awaited if it is a Promise. Only printed values and that final expression become program output. ' + lifetime + ' Use await import(...) for modules. Relative paths use the supplied working directory. Direct filesystem access follows this execution\'s sandbox policy; process.env starts empty. ' + asynchronousFailure + ' Values from bindings and imports can belong to another realm; use Array.isArray for arrays and the supplied binding error classes for failures, because instanceof Array or Error may be false.' + recovery,
+        executionInstructions: 'The program contains TypeScript script statements; only erasable syntax is accepted, with no enum or namespaces. Type annotations are advisory. Top-level declarations and await are supported; top-level return is not supported. Emit output with console.log(...) or a final lossless JSON expression. The final expression is awaited if it is a Promise. Only printed values and that final expression become program output. ' + lifetime + ' Use await import(...) for modules. Relative paths use the supplied working directory. Direct filesystem access follows this execution\'s sandbox policy; process.env starts with a minimal system PATH only. ' + asynchronousFailure + ' Values from bindings and imports can belong to another realm; use Array.isArray for arrays and the supplied binding error classes for failures, because instanceof Array or Error may be false.' + recovery,
         stripTypes: stripTypeScriptTypes,
       }
     }
