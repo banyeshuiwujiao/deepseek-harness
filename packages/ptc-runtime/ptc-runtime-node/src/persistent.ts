@@ -14,7 +14,7 @@ import type { ResolvedConfig } from './config.ts'
 import { invokeBinding, validateBindings } from './bindings.ts'
 import { createProcessRpc } from './rpc.ts'
 import { bootstrapArgs } from './launch.ts'
-import { STARTUP_ENVIRONMENT_NAMES } from './environment.ts'
+import { programSpawnEnvironment, STARTUP_ENVIRONMENT_NAMES } from './environment.ts'
 import { decodePtcJsonWire } from './json-wire.ts'
 import { OutputLedger } from './output-ledger.ts'
 import { drainOutput, terminateProcess } from './output-stream.ts'
@@ -205,6 +205,7 @@ class Kernel {
     const env: NodeJS.ProcessEnv = Object.fromEntries(Object.keys(process.env)
       .filter(key => !STARTUP_ENVIRONMENT_NAMES.has(key.toUpperCase()) && key.toUpperCase() !== 'ELECTRON_RUN_AS_NODE')
       .map(key => [key, undefined]))
+    Object.assign(env, programSpawnEnvironment())
     const handle = this.ctx.subprocess.spawn({ argv: this.confined?.argv ?? argv, cwd, env, stdio: { stdin: 'ignore', stdout: 'pipe', stderr: 'pipe', control: 'pipe' }, graceMs: this.config.graceMs })
     this.handle = handle
     if (!handle.control || !handle.stdout || !handle.stderr) throw new Error('subprocess provider did not supply persistent PTC pipes')
@@ -322,6 +323,9 @@ export class InMemoryExecution {
   async run(spec: PtcRunSpec): Promise<PtcRunResult> {
     if (this.disposed) throw new Error('persistent PTC: run after disposal')
     if (spec.sandboxPolicy === undefined || !isAbsolute(spec.cwd) || (spec.timeoutMs !== null && (!Number.isFinite(spec.timeoutMs) || spec.timeoutMs <= 0 || spec.timeoutMs > this.config.maxTimeoutMs))) throw new Error('persistent PTC: run requires resolved inputs with a sandbox policy')
+    // Name a missing cwd directly instead of letting the spawn fail with ENOENT against the executable (2026-10-25).
+    const cwdStat = await this.ctx.fs.stat(await this.ctx.fs.resolve(spec.cwd)).catch(() => undefined)
+    if (cwdStat?.type !== 'directory') throw new Error(`persistent PTC: run cwd is missing or not a directory: ${spec.cwd}`)
     const bindings = validateBindings(spec)
     let kernel = spec.stateOwner === undefined ? undefined : this.owners.get(spec.stateOwner)
     kernel?.assertIdle()
