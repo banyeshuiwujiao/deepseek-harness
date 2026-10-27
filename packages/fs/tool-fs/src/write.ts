@@ -10,6 +10,7 @@ import { defineTool } from '@deepseek-ai/dsh-tools'
 import type { DiffCallView, DiffResultView, ToolResult } from '@deepseek-ai/dsh-tools'
 import type { FsWriteOutcome } from '@deepseek-ai/dsh-fs'
 import type {} from '@deepseek-ai/dsh-fs'
+import { escalationRetryGuidance } from '@deepseek-ai/dsh-sandbox'
 import { computeHunkDiffs, diffsFromMeta, pathFromMeta } from './diff.ts'
 import { remediateFsError } from './error.ts'
 import { mutationResult } from './mutation-result.ts'
@@ -67,7 +68,8 @@ export function applyWriteTool(ctx: Context, sandbox: FsSandboxController): void
       ? ''
       : 'Read an existing file before overwriting it with write (the default fs-observation-policy requires it)'
         + (ctx.tools.get('edit', scope) === undefined ? '' : ' and prefer edit for targeted changes')
-        + '.',
+        + '.'
+        + (sandbox.escalationModes.length > 0 ? ' ' + escalationRetryGuidance('operation') : ''),
   })
 
   ctx.tools.register(defineTool({

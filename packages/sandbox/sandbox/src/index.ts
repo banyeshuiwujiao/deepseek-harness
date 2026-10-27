@@ -14,6 +14,7 @@ export {
   WIDER_MODES,
   approveEscalation,
   escalationHintMarker,
+  escalationRetryGuidance,
   sandboxDenialMarker,
   sandboxPermissionsDescription,
   validateEscalationArgs,
