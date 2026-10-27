@@ -12,6 +12,7 @@ import {
   WIDER_MODES,
   approveEscalation,
   escalationHintMarker,
+  escalationRetryGuidance,
   sandboxDenialMarker,
   sandboxPermissionsDescription,
   validateEscalationArgs,
@@ -57,6 +58,17 @@ describe('the model-facing markers', () => {
   it('the hint marker names the family subject', () => {
     expect(escalationHintMarker('command')).toContain('retry this exact command once with sandbox_permissions')
     expect(escalationHintMarker('operation')).toContain('retry this exact operation once with sandbox_permissions')
+  })
+
+  it('the retry guidance names both arguments, the subject and the approval hand-off', () => {
+    for (const subject of ['command', 'operation']) {
+      const guidance = escalationRetryGuidance(subject)
+      expect(guidance).toContain('not a refusal')
+      expect(guidance).toContain('`sandbox_permissions`')
+      expect(guidance).toContain('`justification`')
+      expect(guidance).toContain(`retry the same ${subject} once`)
+      expect(guidance).toContain('asks the user for approval')
+    }
   })
 })
 
