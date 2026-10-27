@@ -1515,6 +1515,16 @@ describe('DeepSeekAdapter against a mock server', () => {
     expect(providerError({ error: { message: 'request rate limit exceeded' } }, 429).code).toBe('RATE_LIMIT')
   })
 
+  it('treats a 429 the provider itself typed as a rate limit as throttling, not quota exhaustion', () => {
+    expect(providerError({
+      error: {
+        code: 'insufficient_quota',
+        message: 'SenseNova: inference exceeds tpm/rpm limit',
+        type: 'rate_limit_error',
+      },
+    }, 429).code).toBe('RATE_LIMIT')
+  })
+
   it('includes the status for JSON error bodies without a message', async () => {
     const server = await mockServer([{ kind: 'http-error', status: 500, body: '{"error":{"type":"x"}}' }])
     const ctx = await harness(server.url)
