@@ -31,6 +31,17 @@ export function mapUsage(usage: PiUsage): TokenUsage {
   }
 }
 
+/**
+ * The provider's own error type for a throughput rejection.
+ *
+ * Gateways commonly reuse OpenAI's `insufficient_quota` code for TPM/RPM
+ * ceilings, so the code alone cannot tell an exhausted balance from a busy
+ * minute. The provider's own `type` field can: a rejection typed as a rate
+ * limit is transient and belongs to the RATE_LIMIT policy (retryable), while
+ * a genuine quota failure stays QUOTA (terminal).
+ */
+const PROVIDER_RATE_LIMIT_TYPE = /["']type["']\s*:\s*["']rate_limit_(?:error|exceeded)["']/i
+
 // XXX(pi-ai upstream): pi-ai flattens the caught error to `error.message`
 // (api/anthropic-messages.js: `errorMessage = error instanceof Error ?
 // error.message : JSON.stringify(error)`), discarding the original Error and its
@@ -41,6 +52,10 @@ export function mapUsage(usage: PiUsage): TokenUsage {
 // us capture the cause ourselves), classify on `code`/`cause` instead of text.
 function classifyPiAiError(message: string): string {
   if (/\b(?:401|403)\b/.test(message)) return 'AUTH'
+  // The provider's own classification wins over the wording of the code it
+  // reuses: a 429 typed as a rate limit must not be reported as an exhausted
+  // quota, or the turn dies instead of retrying under the RATE_LIMIT policy.
+  if (PROVIDER_RATE_LIMIT_TYPE.test(message)) return 'RATE_LIMIT'
   if (isQuotaExceededError(message)) return QUOTA_EXCEEDED_CODE
   if (/\b429\b|rate.?limit/i.test(message)) return 'RATE_LIMIT'
   // A rejected request body (gateway or provider size cap): resending the
