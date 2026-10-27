@@ -6,6 +6,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 import { Duplex } from 'node:stream'
 import { expect, it, onTestFinished } from 'vitest'
 import { createProcessRpc } from '../src/rpc.ts'
+import { programSpawnEnvironment } from '../src/environment.ts'
 import type { HostMethods, ProgramMethods } from '../src/protocol.ts'
 import { decodePtcJsonWire, encodePtcJsonWire } from '../src/json-wire.ts'
 
@@ -54,7 +55,7 @@ it('boots an unbuilt source closure outside the workspace and exchanges tool rep
     outputLimit() {},
   }, [], (error) => { completed.reject(error) })
   onTestFinished(async () => { channel.$close(); child.kill(); await finished })
-  expect(await completed.promise).toEqual({ answer: 42, env: {} })
+  expect(await completed.promise).toEqual({ answer: 42, env: { ...programSpawnEnvironment() } })
   channel.$close()
   await finished
 })
