@@ -8,6 +8,7 @@ import { expect, it, onTestFinished } from 'vitest'
 import { createProcessRpc } from '../src/rpc.ts'
 import type { HostMethods, ProgramMethods } from '../src/protocol.ts'
 import { decodePtcJsonWire, encodePtcJsonWire } from '../src/json-wire.ts'
+import { programSpawnEnvironment } from '../src/environment.ts'
 
 it('boots an unbuilt source closure outside the workspace and exchanges tool replies', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'dsh-node-source-'))
@@ -48,7 +49,15 @@ it('boots an unbuilt source closure outside the workspace and exchanges tool rep
     outputLimit() {},
   }, [], (error) => { completed.reject(error) })
   onTestFinished(async () => { channel.$close(); child.kill(); await finished })
-  expect(await completed.promise).toEqual({ answer: 42, env: {} })
+  const outcome = await completed.promise as { answer: number, env: Record<string, string> }
+  expect(outcome.answer).toBe(42)
+  // CoreFoundation initializes __CF_USER_TEXT_ENCODING independently on a macOS child.
+  const expected = { ...programSpawnEnvironment() }
+  for (const key of Object.keys(outcome.env)) {
+    if (key === '__CF_USER_TEXT_ENCODING') continue
+    expect(expected[key]).toBe(outcome.env[key])
+  }
+  expect(Object.keys(outcome.env).length).toBe(Object.keys(expected).length + (outcome.env.__CF_USER_TEXT_ENCODING === undefined ? 0 : 1))
   channel.$close()
   await finished
 })

@@ -904,6 +904,13 @@ describe('mapStopReason / mapUsage', () => {
       .toMatchObject({ kind: 'error', failure: { code: 'RATE_LIMIT' } })
     expect(mapStopReason(assistant({ stopReason: 'error', errorMessage: 'HTTP 429: insufficient_quota' })))
       .toMatchObject({ kind: 'error', failure: { code: 'QUOTA' } })
+    // A gateway that reuses `insufficient_quota` for a TPM/RPM ceiling while
+    // typing the failure as a rate limit describes throttling, not an
+    // exhausted balance: it must stay retryable.
+    expect(mapStopReason(assistant({
+      stopReason: 'error',
+      errorMessage: '429: {"code":"insufficient_quota","message":"SenseNova: inference exceeds tpm/rpm limit","param":null,"type":"rate_limit_error"}',
+    }))).toMatchObject({ kind: 'error', failure: { code: 'RATE_LIMIT' } })
     expect(mapStopReason(assistant({
       stopReason: 'error',
       errorMessage: 'OpenAI API error (429): You exceeded your current quota, please check your plan and billing details.',
