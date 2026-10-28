@@ -1,4 +1,4 @@
-/** Launch the Desktop profile through the Web application and report its URL to Electron. */
+/** Launch the Desktop profile through the Web application and report its URL to the shell. */
 
 import { delimiter, join } from 'node:path'
 import { inspect } from 'node:util'
@@ -15,6 +15,7 @@ import { installDesktopUpdateTaskControl } from './update-tasks.ts'
 import { installDesktopQuitInspection } from './quit-inspection.ts'
 import { installPlatformSessionPublisher } from './platform-session.ts'
 import { installOfficeEngineResolution } from './office-engine.ts'
+import { createDesktopHostTransport } from './transport.ts'
 
 async function main(): Promise<void> {
   const runtimeDir = process.argv[2] as string
@@ -41,6 +42,7 @@ async function main(): Promise<void> {
       },
     }),
   })
+  const transport = createDesktopHostTransport()
   let stopping: Promise<void> | undefined
   const dragReads = new Map<number, AbortController>()
   const dragTasks = new Set<Promise<void>>()
@@ -48,23 +50,19 @@ async function main(): Promise<void> {
     updateTasks?: ReturnType<typeof installDesktopUpdateTaskControl>
     quitInspection?: ReturnType<typeof installDesktopQuitInspection>
   } = {}
-  const send = (message: object): Promise<void> => new Promise((resolve, reject) => {
-    if (!process.connected || process.send === undefined) { resolve(); return }
-    process.send(message, (error) => { if (error === null) resolve(); else reject(error) })
-  })
   const stop = (): Promise<void> => stopping ??= (async () => {
     for (const abort of dragReads.values()) abort.abort()
     await Promise.allSettled(dragTasks)
     // Startup failure is reported by main; shutdown only owns a tree that booted.
     const running = await application.catch(() => undefined)
     await running?.shutdown.shutdown(0)
-    await send({ type: 'shutdown-complete' })
-    if (process.connected) process.disconnect()
+    await transport.send({ type: 'shutdown-complete' })
+    transport.disconnect()
     // A handle a disposed plugin left open would otherwise keep the Host alive past the shell's graceful
     // deadline; a startup failure keeps its own diagnostic exit.
     if (running !== undefined) process.exit()
   })()
-  process.on('message', (message: unknown) => {
+  transport.onMessage((message: unknown) => {
     if (typeof message !== 'object' || message === null || !('type' in message)) return
     if (message.type === 'shutdown') { void stop(); return }
     if (message.type === 'file-drag-cancel') {
@@ -82,10 +80,10 @@ async function main(): Promise<void> {
           if (stopping !== undefined) throw new Error('Host stopping')
           const { ctx } = await application
           const resource = await localDragResource(ctx, address, abort.signal)
-          await send({ type: 'file-drag-resource', requestId, resource })
+          await transport.send({ type: 'file-drag-resource', requestId, resource })
         } catch (error) {
           if (!abort.signal.aborted) console.error(error)
-          await send({ type: 'file-drag-resource', requestId, resource: null, error: 'File drag resource unavailable' })
+          await transport.send({ type: 'file-drag-resource', requestId, resource: null, error: 'File drag resource unavailable' })
         } finally { dragReads.delete(requestId) }
       })().catch((error: unknown) => { console.error(error) })
       dragTasks.add(task)
@@ -99,10 +97,10 @@ async function main(): Promise<void> {
         try {
           if (stopping !== undefined || control.quitInspection === undefined) throw new Error('desktop quit: Host is unavailable')
           const inspection = await control.quitInspection()
-          await send({ type: 'quit-inspection', requestId, ...inspection })
+          await transport.send({ type: 'quit-inspection', requestId, ...inspection })
         } catch (error) {
           // The shell treats an unknown state as interruptible work and asks before quitting.
-          await send({ type: 'quit-inspection', requestId, activeTasks: true, scheduledTasks: false,
+          await transport.send({ type: 'quit-inspection', requestId, activeTasks: true, scheduledTasks: false,
             error: error instanceof Error ? error.message : String(error) })
         }
       })().catch((error: unknown) => { console.error(error) })
@@ -114,14 +112,14 @@ async function main(): Promise<void> {
       try {
         if (stopping !== undefined || control.updateTasks === undefined) throw new Error('desktop update: Host is unavailable')
         const active = await control.updateTasks(message.action as 'inspect' | 'lock' | 'unlock')
-        await send({ type: 'update-tasks', requestId: message.requestId, active })
+        await transport.send({ type: 'update-tasks', requestId: message.requestId, active })
       } catch (error) {
-        await send({ type: 'update-tasks', requestId: message.requestId, active: true,
+        await transport.send({ type: 'update-tasks', requestId: message.requestId, active: true,
           error: error instanceof Error ? error.message : String(error) })
       }
     })().catch((error: unknown) => { console.error(error) })
   })
-  process.once('disconnect', () => { void stop() })
+  transport.onDisconnect(() => { void stop() })
   const { ctx } = await application
   control.updateTasks = installDesktopUpdateTaskControl(ctx)
   control.quitInspection = installDesktopQuitInspection(ctx)
@@ -131,25 +129,30 @@ async function main(): Promise<void> {
     root: join(resolveDshHome(), 'dsh-runtimes', 'dsh-primary-runtime'),
   })
   installPlatformSessionPublisher(ctx, (session) => {
-    if (process.connected) process.send?.({ type: 'platform-session', session })
+    if (transport.connected) void transport.send({ type: 'platform-session', session })
   })
   const url = ctx.connection.authenticatedUrl(`${ctx.webServer.protocol}//127.0.0.1:${String(ctx.webServer.port)}`)
-  if (process.connected) process.send?.({ type: 'ready', url, injections: ctx.webServer.collectIndexInjections(ctx.connection.browserPeer) }, (error) => { if (error !== null) console.error(error) })
+  if (transport.connected) {
+    void transport.send({ type: 'ready', url, injections: ctx.webServer.collectIndexInjections(ctx.connection.browserPeer) })
+  }
 }
 
-/** Upper bound of the startup diagnostic carried over IPC; the head holds the message and stack. */
+/** Upper bound of the startup diagnostic carried over the transport; the head holds the message and stack. */
 const MAX_FATAL_DIAGNOSTIC_CHARS = 64 * 1024
 
 if (import.meta.main) {
+  const transport = createDesktopHostTransport()
   main().catch((error: unknown) => {
     const message = error instanceof Error ? error.message : String(error)
     // The shell receives the complete inspected error here, not through stderr:
     // stderr bytes and this IPC message race, and the shell reports the first
     // failure it sees.
     const diagnostic = inspect(error, { depth: 4, maxArrayLength: 50 }).slice(0, MAX_FATAL_DIAGNOSTIC_CHARS)
-    if (process.connected) process.send?.({ type: 'fatal', message, diagnostic }, (error) => { if (error !== null) console.error(error) })
+    if (transport.connected) {
+      void transport.send({ type: 'fatal', message, diagnostic })
+    }
     console.error(error)
     process.exitCode = 1
-    if (process.connected) process.disconnect()
+    transport.disconnect()
   })
 }
