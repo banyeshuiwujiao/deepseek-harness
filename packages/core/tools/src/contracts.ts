@@ -370,14 +370,23 @@ export type PostToolDecision =
   | { kind: 'block'; feedback: ContentBlock[]; additionalContexts?: UserMessage[] }
 
 /**
- * Per-scope filter over global tools. Restrictions intersect and do not affect
- * scoped registrations or the reserved PTC mode transport.
+ * Per-scope filter over global tools. Restrictions intersect and, by default,
+ * do not affect scoped (own-layer) registrations or the reserved PTC mode
+ * transport. Set `scopeLocal: true` to also restrict the calling scope's own
+ * tools (and to be allowed to name them).
  */
 export interface ToolRestriction {
   /** Global tool names that stay visible; everything else is removed. */
   readonly allow?: readonly string[]
   /** Global tool names removed from visibility. */
   readonly deny?: readonly string[]
+  /**
+   * When true, `allow`/`deny` additionally apply to the calling scope's
+   * OWN-layer (agent/preset-registered) tools, and such names may be listed.
+   * Default false preserves the historic "scoped registrations are exempt"
+   * behavior, so existing callers are unaffected.
+   */
+  readonly scopeLocal?: boolean
 }
 
 /**

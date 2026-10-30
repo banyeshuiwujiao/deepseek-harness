@@ -39,6 +39,7 @@ declare module '@deepseek-ai/cordis' {
 interface CompiledToolRestriction {
   readonly allow?: ReadonlySet<string>
   readonly deny?: ReadonlySet<string>
+  readonly scopeLocal?: boolean
 }
 
 /** One registered definition and its step-time activation condition. */
@@ -78,6 +79,20 @@ class ToolLayer implements ScopeLayer {
   /** Whether every compiled restriction in this layer admits a global tool name. */
   admits(name: string): boolean {
     for (const filter of this.restrictions.values()) {
+      if ((filter.allow !== undefined && !filter.allow.has(name))
+        || (filter.deny !== undefined && filter.deny.has(name))) return false
+    }
+    return true
+  }
+
+  /**
+   * Whether this layer's SCOPE-LOCAL restrictions admit an own-layer tool name.
+   * Only restrictions compiled with `scopeLocal: true` participate, so ordinary
+   * (global-targeted) restrictions keep own registrations exempt.
+   */
+  admitsOwn(name: string): boolean {
+    for (const filter of this.restrictions.values()) {
+      if (filter.scopeLocal !== true) continue
       if ((filter.allow !== undefined && !filter.allow.has(name))
         || (filter.deny !== undefined && filter.deny.has(name))) return false
     }
@@ -166,17 +181,29 @@ export class ToolsService extends Service {
     }
     const allow = filter.allow
     const deny = filter.deny
+    const scopeLocal = filter.scopeLocal === true
     if (allow === undefined && deny === undefined) {
       throw new Error('tools.restrict({}) is a no-op: pass `allow` and/or `deny` (an empty filter is almost always a materialized-empty-config bug)')
     }
     const compiled: CompiledToolRestriction = {
+      ...scopeLocal ? { scopeLocal: true } : {},
       ...allow !== undefined ? { allow: new Set(allow) } : {},
       ...deny !== undefined ? { deny: new Set(deny) } : {},
     }
     if ([...allow ?? [], ...deny ?? []].includes(RUN_CODE_NAME)) {
       throw new Error(`tools.restrict() cannot name reserved PTC mode presentation transport "${RUN_CODE_NAME}"; restrict end-capability tools instead`)
     }
-    const known = this.view(scope).restrictableNames
+    // scopeLocal: allow/deny may also name the calling scope's OWN-layer tools.
+    const baseKnown = this.view(scope).restrictableNames
+    let known: ReadonlySet<string> = baseKnown
+    if (scopeLocal) {
+      const own = this.layers.peek(scope)
+      if (own !== undefined) {
+        const merged = new Set(baseKnown)
+        for (const [name] of own.tools.entries()) merged.add(name)
+        known = merged
+      }
+    }
     const unknown = [...allow ?? [], ...deny ?? []].filter(name => !known.has(name))
     if (unknown.length > 0) {
       throw new Error(`tools.restrict() names unknown global tool${unknown.length > 1 ? 's' : ''} ${unknown.map(n => `"${n}"`).join(', ')}; known global tools: ${[...known].sort().join(', ') || '(none)'}`)
@@ -219,8 +246,12 @@ export class ToolsService extends Service {
     if (own !== undefined) {
       for (const [name, registration] of own.tools.entries()) {
         knownNames.add(name)
-        visible.set(name, registration.definition)
-        registrations.set(name, registration)
+        // Scope-local restrictions (opt-in via restrict({ scopeLocal:true })) may
+        // hide own-layer tools; ordinary restrictions leave them exempt.
+        if (layers.every(layer => layer.admitsOwn(name))) {
+          visible.set(name, registration.definition)
+          registrations.set(name, registration)
+        }
       }
     }
     return { visible, registrations, knownNames, restrictableNames }
