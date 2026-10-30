@@ -83,13 +83,14 @@ export class WebProductBundleIsolation {
   captureChunks(bundle: WebOutputBundle): void {
     for (const item of Object.values(bundle)) {
       if (item.type !== 'chunk') continue
-      this.chunks.set(item.fileName, {
-        ...item,
-        modules: { ...item.modules },
-        imports: [...item.imports],
-        dynamicImports: [...item.dynamicImports],
-        implicitlyLoadedBefore: [...item.implicitlyLoadedBefore],
-        referencedFiles: [...item.referencedFiles],
+      const normalized = normalizeOutputChunk(item)
+      this.chunks.set(normalized.fileName, {
+        ...normalized,
+        modules: { ...normalized.modules },
+        imports: [...normalized.imports],
+        dynamicImports: [...normalized.dynamicImports],
+        implicitlyLoadedBefore: [...normalized.implicitlyLoadedBefore],
+        referencedFiles: [...normalized.referencedFiles],
         ...(item.viteMetadata === undefined ? {} : { viteMetadata: {
           importedCss: new Set(item.viteMetadata.importedCss),
           importedAssets: new Set(item.viteMetadata.importedAssets),
@@ -138,6 +139,10 @@ export class WebProductBundleIsolation {
     }
     const outputName = (name: string): string => outputs.has(name) ? name
       : aliases.get(name) ?? aliases.get(basename(name)) ?? name
+    const normalizedChunks = new Map<string, WebOutputChunk>()
+    for (const [file, item] of outputs) {
+      if (item.type === 'chunk') normalizedChunks.set(file, normalizeOutputChunk(item))
+    }
     const references = new Map<string, AssetReference[]>()
     for (const reference of this.references) {
       const host = outputName(reference.host)
@@ -152,7 +157,7 @@ export class WebProductBundleIsolation {
       for (const input of inputs) this.inputs.assertInput(input)
     }
     const checkModule = (id: string): void => {
-      if (visitedModules.has(id)) return
+      if (visitedModules.has(id) || isBundlerRuntimeModule(id)) return
       visitedModules.add(id)
       this.inputs.assertInput(id)
       const info = moduleInfo(id)
@@ -164,6 +169,7 @@ export class WebProductBundleIsolation {
       if (/[?&](?:sharedworker|worker)(?:&|$)/.test(id)) checkWorker(physicalBundleInput(id) ?? id)
       for (const file of this.cssInputs.get(id) ?? []) this.inputs.assertInput(file)
       for (const child of [...info.importedIds, ...info.dynamicallyImportedIds]) {
+        if (isBundlerRuntimeModule(child)) continue
         const childInfo = moduleInfo(child)
         if (childInfo === null) throw new Error(`Web product isolation: module ${child} has no Rollup module record`)
         if (childInfo.isIncluded || childInfo.isExternal) checkModule(child)
@@ -177,9 +183,10 @@ export class WebProductBundleIsolation {
       if (item === undefined) throw new Error(`Web product isolation: referenced output ${file} is missing`)
       if (this.workerInputs.has(file)) checkWorker(file)
       else if (item.type === 'chunk') {
-        for (const id of Object.keys(item.modules)) checkModule(id)
-        queue.push(...item.imports, ...item.dynamicImports, ...item.implicitlyLoadedBefore, ...item.referencedFiles)
-        queue.push(...item.viteMetadata?.importedCss ?? [], ...item.viteMetadata?.importedAssets ?? [])
+        const chunk = normalizedChunks.get(file) ?? normalizeOutputChunk(item)
+        for (const id of Object.keys(chunk.modules)) checkModule(id)
+        queue.push(...chunk.imports, ...chunk.dynamicImports, ...chunk.implicitlyLoadedBefore, ...chunk.referencedFiles)
+        queue.push(...chunk.viteMetadata?.importedCss ?? [], ...chunk.viteMetadata?.importedAssets ?? [])
       } else if (cssOwners.has(file)) {
         for (const id of cssOwners.get(file) ?? []) checkModule(id)
       } else {
@@ -196,4 +203,24 @@ export class WebProductBundleIsolation {
     if (visitedModules.size === 0) throw new Error('Web product isolation: index.html has no recorded reachable modules')
   }
 
+}
+
+/** Rolldown injects a virtual runtime helper that has no Rollup module record or filesystem owner. */
+function isBundlerRuntimeModule(id: string): boolean {
+  return id.replace(/^\u0000/, '').startsWith('rolldown/runtime.js')
+}
+
+/** Rolldown's plugin bundle omits Rollup's optional chunk arrays and may expose module ids separately. */
+function normalizeOutputChunk(item: WebOutputChunk): WebOutputChunk {
+  const rolldownItem = item as WebOutputChunk & { moduleIds?: readonly string[] }
+  const modules = { ...(item.modules ?? {}) }
+  for (const id of rolldownItem.moduleIds ?? []) modules[id] ??= {}
+  return {
+    ...item,
+    modules,
+    imports: [...(item.imports ?? [])],
+    dynamicImports: [...(item.dynamicImports ?? [])],
+    implicitlyLoadedBefore: [...(item.implicitlyLoadedBefore ?? [])],
+    referencedFiles: [...(item.referencedFiles ?? [])],
+  }
 }

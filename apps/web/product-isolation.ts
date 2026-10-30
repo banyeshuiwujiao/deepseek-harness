@@ -58,7 +58,13 @@ export function productWebBundleIsolation(repository: string, webRoot: string): 
             name: 'dsh-worker-build-inputs',
             generateBundle: {
               order: 'post',
-              handler(_options, bundle) { inputs.workerBundle(bundle, this.getWatchFiles()) },
+              handler(_options, bundle) {
+                const context = this as { getWatchFiles?: () => readonly string[]; getModuleIds?: () => Iterable<string> }
+                const watched = typeof context.getWatchFiles === 'function'
+                  ? context.getWatchFiles()
+                  : typeof context.getModuleIds === 'function' ? [...context.getModuleIds()] : []
+                inputs.workerBundle(bundle, watched)
+              },
             },
           }],
         },
