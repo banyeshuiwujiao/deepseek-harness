@@ -745,3 +745,55 @@ describe('scoped execution dispatch', () => {
     ]))
   })
 })
+
+
+describe('restrict({ scopeLocal }) — own-layer coverage (regression)', () => {
+  it('allow: own tool must be listed too; unlisted own hidden; global allow still applies', async () => {
+    const ctx = await mount()
+    const { scope, key } = await mintAgentScope(ctx, 'a')
+    ctx.tools.register(tool('read'))
+    ctx.tools.register(tool('bash'))
+    scope.ctx.tools.register(tool('mine'))
+    scope.ctx.tools.register(tool('extra'))
+    scope.ctx.tools.restrict({ allow: ['read', 'mine'], scopeLocal: true })
+    expect(ctx.tools.schemas(key).map(t => t.name).sort()).toEqual(['mine', 'read'])
+    expect(await run(ctx, 'extra', key)).toBe('Error: unknown tool "extra"')
+    expect(await run(ctx, 'bash', key)).toBe('Error: unknown tool "bash"')
+    expect(await run(ctx, 'mine', key)).toBe('ran:mine')
+  })
+
+  it('multiple scopeLocal restricts intersect on own tools', async () => {
+    const ctx = await mount()
+    const { scope, key } = await mintAgentScope(ctx, 'a')
+    ctx.tools.register(tool('g'))
+    scope.ctx.tools.register(tool('a'))
+    scope.ctx.tools.register(tool('b'))
+    scope.ctx.tools.restrict({ deny: ['a'], scopeLocal: true })
+    scope.ctx.tools.restrict({ deny: ['b'], scopeLocal: true })
+    expect(ctx.tools.schemas(key).map(t => t.name).sort()).toEqual(['g'])
+  })
+
+  it('scopeLocal:false keeps own tools exempt and disallows naming them', async () => {
+    const ctx = await mount()
+    const { scope, key } = await mintAgentScope(ctx, 'a')
+    ctx.tools.register(tool('read'))
+    ctx.tools.register(tool('bash'))
+    scope.ctx.tools.register(tool('mine'))
+    scope.ctx.tools.restrict({ deny: ['bash'], scopeLocal: false })
+    expect(ctx.tools.schemas(key).map(t => t.name).sort()).toEqual(['mine', 'read'])
+    expect(() => scope.ctx.tools.restrict({ deny: ['mine'], scopeLocal: false })).toThrow(/unknown global tool "mine"/)
+  })
+
+  it('scopeLocal deny of an own tool leaves the global view and other scopes untouched', async () => {
+    const ctx = await mount()
+    const a = await mintAgentScope(ctx, 'a')
+    const b = await mintAgentScope(ctx, 'b')
+    ctx.tools.register(tool('shared'))
+    a.scope.ctx.tools.register(tool('mineA'))
+    b.scope.ctx.tools.register(tool('mineB'))
+    a.scope.ctx.tools.restrict({ deny: ['mineA'], scopeLocal: true })
+    expect(ctx.tools.schemas(a.key).map(t => t.name).sort()).toEqual(['shared'])
+    expect(ctx.tools.schemas(b.key).map(t => t.name).sort()).toEqual(['mineB', 'shared'])
+    expect(ctx.tools.schemas().map(t => t.name).sort()).toEqual(['shared'])
+  })
+})
