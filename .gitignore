@@ -50,3 +50,5 @@ native/system/test/bin/
 
 # Generated company-signed CUA release record.
 /packages/experimental/cua-macos/cua-helper.json
+# 临时 UI 审计产物（本地调试日志/脚本，勿入库）
+.tmp-ui-audit/
