@@ -202,6 +202,31 @@ describe('restrict()', () => {
     expect(() => emptyScope.ctx.tools.restrict({ deny: ['ghost'] }))
       .toThrow(/known global tools: \(none\)/)
   })
+
+  it('scopeLocal:true restricts own-layer tools; default leaves them exempt', async () => {
+    const ctx = await mount()
+    const { scope, key } = await mintAgentScope(ctx, 'a')
+    ctx.tools.register(tool('read'))
+    ctx.tools.register(tool('bash'))
+    scope.ctx.tools.register(tool('mine'))
+
+    // default: own-layer tool is exempt AND cannot be named by a restriction
+    expect(() => scope.ctx.tools.restrict({ deny: ['mine'] })).toThrow(/unknown global tool "mine"/)
+    scope.ctx.tools.restrict({ deny: ['bash'] })
+    expect(ctx.tools.schemas(key).map(t => t.name).sort()).toEqual(['mine', 'read'])
+    expect(await run(ctx, 'mine', key)).toBe('ran:mine')
+
+    // scopeLocal:true may name & hide the own-layer tool
+    const lift = scope.ctx.tools.restrict({ deny: ['mine'], scopeLocal: true })
+    expect(ctx.tools.schemas(key).map(t => t.name)).toEqual(['read'])
+    expect(await run(ctx, 'mine', key)).toBe('Error: unknown tool "mine"')
+
+    // lifting restores the own-layer tool (bash deny still active)
+    lift()
+    expect(ctx.tools.schemas(key).map(t => t.name).sort()).toEqual(['mine', 'read'])
+    // global view is untouched (own-layer tool never appears there)
+    expect(ctx.tools.schemas().map(t => t.name).sort()).toEqual(['bash', 'read'])
+  })
 })
 
 describe('restrict() over an inherited scope layer', () => {
