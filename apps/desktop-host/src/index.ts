@@ -17,9 +17,10 @@ import { installDesktopUpdateTaskControl } from './update-tasks.ts'
 import { installDesktopQuitInspection } from './quit-inspection.ts'
 import { installPlatformSessionPublisher } from './platform-session.ts'
 import { installOfficeEngineResolution } from './office-engine.ts'
+import { createDesktopHostTransport } from './transport.ts'
 import { installOperationDiagnostics } from './operation-diagnostics.ts'
 
-async function main(): Promise<void> {
+async function main(transport: ReturnType<typeof createDesktopHostTransport>): Promise<void> {
   const runId = randomUUID() as PluginOperationRunId
   if (process.connected) process.send?.({ type: 'starting', runId }, (error) => { if (error !== null) console.error(error) })
   const runtimeDir = process.argv[2] as string
@@ -33,7 +34,10 @@ async function main(): Promise<void> {
     profile: 'desktop',
     resolvedProfile: { profile, installAnchor },
     patchFiles: [],
-    args: ['--no-open', '--host', '127.0.0.1', '--port', '0'],
+    // `DSH_DESKTOP_PORT` lets the shell pin the Web origin so the client's
+    // per-origin localStorage (layout, theme, expanded panels) survives a
+    // restart; `0` keeps the ephemeral-port behaviour.
+    args: ['--no-open', '--host', '127.0.0.1', '--port', process.env.DSH_DESKTOP_PORT ?? '0'],
     ...(process.argv[5] === undefined ? {} : {
       packageManager: {
         command: process.execPath,
@@ -53,9 +57,7 @@ async function main(): Promise<void> {
     updateTasks?: ReturnType<typeof installDesktopUpdateTaskControl>
     quitInspection?: ReturnType<typeof installDesktopQuitInspection>
   } = {}
-  const send = (message: object): Promise<void> => new Promise((resolve, reject) => {
-    if (!process.connected || process.send === undefined) { resolve(); return }
-    process.send(message, (error) => { if (error === null) resolve(); else reject(error) })
+  const send = (message: object): Promise<void> => transport.send(message)
   })
   const stop = (): Promise<void> => stopping ??= (async () => {
     for (const abort of dragReads.values()) abort.abort()
@@ -69,7 +71,7 @@ async function main(): Promise<void> {
     // deadline; a startup failure keeps its own diagnostic exit.
     if (running !== undefined) process.exit()
   })()
-  process.on('message', (message: unknown) => {
+  transport.onMessage((message: unknown) => {
     if (typeof message !== 'object' || message === null || !('type' in message)) return
     if (message.type === 'shutdown') { void stop(); return }
     if (message.type === 'file-drag-cancel') {
@@ -126,7 +128,7 @@ async function main(): Promise<void> {
       }
     })().catch((error: unknown) => { console.error(error) })
   })
-  process.once('disconnect', () => { void stop() })
+  transport.onDisconnect(() => { void stop() })
   const { ctx } = await application
   installOperationDiagnostics(ctx, record => send({ type: 'plugin-operation', record }), 32, runId)
   control.updateTasks = installDesktopUpdateTaskControl(ctx)
@@ -144,15 +146,13 @@ async function main(): Promise<void> {
 }
 
 if (import.meta.main) {
-  main().catch((error: unknown) => {
+  const transport = createDesktopHostTransport()
+  main(transport).catch((error: unknown) => {
     const message = error instanceof Error ? error.message : String(error)
-    // The shell receives the complete inspected error here, not through stderr:
-    // stderr bytes and this IPC message race, and the shell reports the first
-    // failure it sees.
     const diagnostic = formatFatalDiagnostic(error)
-    if (process.connected) process.send?.({ type: 'fatal', message, diagnostic }, (error) => { if (error !== null) console.error(error) })
+    if (transport.connected) void transport.send({ type: 'fatal', message, diagnostic })
     console.error(error)
     process.exitCode = 1
-    if (process.connected) process.disconnect()
+    transport.disconnect()
   })
 }
