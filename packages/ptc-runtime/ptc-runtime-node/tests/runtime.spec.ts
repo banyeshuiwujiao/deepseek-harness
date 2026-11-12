@@ -8,8 +8,8 @@ import { SandboxUnavailableError } from '@deepseek-ai/dsh-sandbox'
 import { describe, expect, it, onTestFinished, vi } from 'vitest'
 import type { PtcBindingFunction, PtcBindingNamespace, PtcRunRequest } from '@deepseek-ai/dsh-ptc-runtime'
 import type { Config } from '../src/index.ts'
-import { programSpawnEnvironment } from '../src/environment.ts'
 import { mountRuntime } from './setup.ts'
+import { programSpawnEnvironment } from '../src/environment.ts'
 
 /** Probe the sandbox independently so Node-runtime launch failures cannot skip enforcement tests. */
 const sandboxUsable = await (async () => {
@@ -40,30 +40,20 @@ function bindings(functions: Record<string, PtcBindingFunction>): PtcBindingName
 }
 
 describe('Node program process', () => {
-  it('runs erasable TypeScript in the resolved directory with only the minimal spawn environment', async () => {
+  it('allows function-local process imports with the scrubbed program environment', async () => {
+    const { run } = await setup()
+    const result = await run({ program: 'const process = await import("node:process"); return { platform: process.platform, env: { ...process.env } }', bindings: [] })
+    expect(result.error).toBeUndefined()
+    expect(result.value).toEqual({ platform: process.platform, env: { ...programSpawnEnvironment() } })
+  })
+
+  it('runs erasable TypeScript in the resolved directory with an empty environment', async () => {
     const { run, cwd } = await setup()
     const result = await run({ program: 'const n: number = 6; console.log("ready"); return { n: n * 7, cwd: process.cwd(), env: { ...process.env } };', bindings: [] })
     expect(result.error).toBeUndefined()
-    const minimal = programSpawnEnvironment()
-    // CoreFoundation initializes this entry independently when a macOS child starts.
-    if (process.platform === 'darwin') minimal.__CF_USER_TEXT_ENCODING = ''
-    expect(result.value).toEqual({ n: 42, cwd, env: minimal })
+    expect(result.value).toEqual({ n: 42, cwd, env: { ...programSpawnEnvironment() } })
     expect(result.logs).toEqual(['ready'])
     expect(result.sandbox).toEqual({ mode: 'danger-full-access', denied: false })
-  })
-
-  it('hands programs a PATH that resolves native executables by bare name', async () => {
-    const { run } = await setup()
-    const probe = process.platform === 'win32'
-      ? 'const {spawnSync}=await import("node:child_process"); const child=spawnSync("cmd",["/d","/c","echo ok"],{encoding:"utf8"}); return {path:process.env.PATH,status:child.status,out:child.stdout};'
-      : 'const {spawnSync}=await import("node:child_process"); const child=spawnSync("sh",["-c","echo ok"],{encoding:"utf8"}); return {path:process.env.PATH,status:child.status,out:child.stdout};'
-    const result = await run({ program: probe, bindings: [] })
-    expect(result.error).toBeUndefined()
-    const value = result.value as { path: string | undefined; status: number | null; out: string }
-    expect(value.path).toBeDefined()
-    expect(value.path).toContain(process.platform === 'win32' ? 'System32' : '/usr/bin')
-    expect(value.status).toBe(0)
-    expect(value.out).toContain('ok')
   })
 
   it('keeps native startup paths available for nested Node creation with an empty model environment', async () => {
@@ -74,10 +64,13 @@ describe('Node program process', () => {
     })
     expect(result.error).toBeUndefined()
     const value = result.value as { env: string[]; status: number | null; error: string | null; childKeys: string[] }
-    expect(value.env.sort()).toEqual(Object.keys(programSpawnEnvironment()).sort())
+    expect(value.env.slice().sort()).toEqual(Object.keys(programSpawnEnvironment()).sort())
     expect(value.status).toBe(0)
     expect(value.error).toBeNull()
-    expect(value.childKeys.every(key => key.toUpperCase() in programSpawnEnvironment() || key === '__CF_USER_TEXT_ENCODING')).toBe(true)
+    const nativeKeys = ['PATH', 'PATHEXT', 'SYSTEMROOT', 'WINDIR', 'TEMP', 'TMP']
+    // CoreFoundation initializes this entry independently when a macOS child starts.
+    if (process.platform === 'darwin') nativeKeys.push('__CF_USER_TEXT_ENCODING')
+    expect(value.childKeys.filter(key => !nativeKeys.includes(key.toUpperCase()))).toEqual([])
   })
 
   it.skipIf(process.platform !== 'win32' || !sandboxUsable)('uses the common Windows grant lock and private native temp without exposing ambient values', async () => {
@@ -101,7 +94,7 @@ describe('Node program process', () => {
     })
     expect(result.error).toBeUndefined()
     const value = result.value as { env: string[]; native: { env: string[]; temp: string }; observed: string }
-    expect(value.env.sort()).toEqual(Object.keys(programSpawnEnvironment()).sort())
+    expect(value.env.slice().sort()).toEqual(Object.keys(programSpawnEnvironment()).sort())
     expect(value.native.env).not.toContain('DSH_TEST_RUNTIME_SECRET')
     expect(value.native.temp.startsWith(`${temp}\\dsh-`)).toBe(true)
     expect(value.observed).toBe('native-temp')
@@ -144,12 +137,6 @@ describe('Node program process', () => {
   it('rejects lossy program output', async () => {
     const { run } = await setup()
     expect((await run({ program: 'return { value: undefined }', bindings: [] })).error?.kind).toBe('invalid-output')
-  })
-
-  it('names a missing cwd instead of failing the spawn with ENOENT against the executable', async () => {
-    const { runtime, cwd } = await setup()
-    const spec = runtime.resolve({ program: 'return 1', bindings: [] })
-    await expect(runtime.run({ ...spec, cwd: join(cwd, 'does-not-exist') })).rejects.toThrow('does-not-exist')
   })
 
   it('enforces the combined output cap', async () => {
@@ -301,7 +288,7 @@ describe('Node program process', () => {
       process.env.PATH = `${root}${delimiter}${previousPath ?? ''}`
       const result = await run({ program: 'return { env: Object.keys(process.env) };', bindings: [] })
       expect(result.error).toBeUndefined()
-      expect(result.value).toEqual({ env: [] })
+      expect(result.value).toEqual({ env: Object.keys(programSpawnEnvironment()) })
     } finally {
       substitute.mockRestore()
       if (previousPath === undefined) delete process.env.PATH

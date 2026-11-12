@@ -86,9 +86,11 @@ function bytesBody(bytes: Uint8Array): ReadableStream<Uint8Array> {
  * @param renderIndex - turns the raw index.html body into the served document
  * for the dist root and configured index path.
  * @returns the dist response; a HEAD response carries the GET status and
- * headers without a body. A file other than the index carries
- * `cache-control: no-cache` and a weak ETag from a SHA-1 of its bytes, and a
- * request whose `If-None-Match` equals that ETag receives an empty 304.
+ * headers without a body. A file other than the index carries a weak ETag from
+ * a SHA-1 of its bytes and a request whose `If-None-Match` equals that ETag
+ * receives an empty 304; bundles under `assets/` are additionally cacheable for
+ * a year because their file name carries a content hash, while every other
+ * path carries `cache-control: no-cache`.
  */
 async function serveStatic(
   request: Request, distRoot: string, distIndex: string,
@@ -111,7 +113,15 @@ async function serveStatic(
     } else {
       body = await readFile(target)
       // Weak: gzip changes the transferred bytes.
-      const cache = { 'cache-control': 'no-cache', etag: `W/"${createHash('sha1').update(body).digest('base64url')}"` }
+      const etag = `W/"${createHash('sha1').update(body).digest('base64url')}"`
+      // Bundles under `assets/` carry a content hash in their file name, so a
+      // new build renames them: a year-long cache can never serve stale bytes
+      // for a changed file, and the revalidate round trip is pure latency.
+      // Every other path (favicon, plugin bundles, index) is stable across
+      // builds and keeps `no-cache`.
+      const cache = target.startsWith(join(distRoot, 'assets') + sep)
+        ? { 'cache-control': 'public, max-age=31536000, immutable', etag }
+        : { 'cache-control': 'no-cache', etag }
       if (request.headers.get('if-none-match') === cache.etag) return new Response(null, { status: 304, headers: cache })
       headers = { 'content-type': MIME[extname(target)] ?? 'application/octet-stream', ...cache }
     }

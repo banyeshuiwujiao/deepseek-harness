@@ -4,12 +4,8 @@
 export const STARTUP_ENVIRONMENT_NAMES: ReadonlySet<string> = new Set(['PATH', 'PATHEXT', 'SYSTEMROOT', 'WINDIR', 'TEMP', 'TMP'])
 
 /**
- * Clear inherited credentials, then restore only the minimal spawn environment.
- *
- * The program-visible environment carries no inherited values (credentials must not
- * reach model-written code), but it keeps `programSpawnEnvironment` so bare
- * executable names and native toolchains work.
- * @param state - Child process environment, replaced with the minimal program-visible object.
+ * Clear inherited credentials while preserving native child-process startup paths.
+ * @param state - Child process environment, replaced with the minimal program-visible spawn object.
  */
 export function clearProgramEnvironment(state: { env: NodeJS.ProcessEnv }): void {
   for (const key of Object.keys(state.env)) {
@@ -17,15 +13,14 @@ export function clearProgramEnvironment(state: { env: NodeJS.ProcessEnv }): void
   }
   state.env = programSpawnEnvironment()
 }
-
 /**
  * Minimal spawn environment handed to program processes.
  *
- * The program-visible environment is deliberately empty (no credentials leak into
- * model-written code), but a bare executable name then fails with `ENOENT` because
- * nothing resolves `PATH`. Hand the process a minimal system `PATH` plus the
- * Windows system-root variables and a temp directory, so `git`, `npm`, and linkers
- * work without the model needing absolute executable paths.
+ * The program-visible environment is deliberately free of inherited values (no
+ * credentials leak into model-written code), but a bare executable name then
+ * fails with ENOENT because nothing resolves PATH. Hand the process a minimal
+ * system PATH plus the Windows system-root variables and a temp directory, so
+ * git, npm, and linkers work without the model needing absolute executable paths.
  * @returns Environment variables safe for model-visible program processes.
  */
 export function programSpawnEnvironment(): NodeJS.ProcessEnv {
@@ -46,3 +41,4 @@ export function programSpawnEnvironment(): NodeJS.ProcessEnv {
   }
   return { PATH: '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin' }
 }
+

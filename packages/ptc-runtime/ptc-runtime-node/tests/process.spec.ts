@@ -1,20 +1,25 @@
 import { spawn } from 'node:child_process'
-import { copyFile, cp, mkdtemp, rm } from 'node:fs/promises'
+import { copyFile, cp, mkdir, mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { Duplex } from 'node:stream'
 import { expect, it, onTestFinished } from 'vitest'
 import { createProcessRpc } from '../src/rpc.ts'
+import { programSpawnEnvironment } from '../src/environment.ts'
 import type { HostMethods, ProgramMethods } from '../src/protocol.ts'
 import { decodePtcJsonWire, encodePtcJsonWire } from '../src/json-wire.ts'
-import { programSpawnEnvironment } from '../src/environment.ts'
 
 it('boots an unbuilt source closure outside the workspace and exchanges tool replies', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'dsh-node-source-'))
   onTestFinished(async () => { await rm(directory, { recursive: true, force: true }) })
   for (const file of ['process.ts', 'bootstrap.ts', 'rpc.ts', 'json-wire.ts', 'output-json.ts', 'protocol.ts', 'environment.ts']) {
     await copyFile(new URL(`../src/${file}`, import.meta.url), join(directory, file))
+  }
+  await cp(new URL('../src/evaluators/', import.meta.url), join(directory, 'evaluators'), { recursive: true })
+  await mkdir(join(directory, 'node_modules'))
+  for (const name of ['acorn', 'acorn-walk']) {
+    await cp(dirname(fileURLToPath(import.meta.resolve(`${name}/package.json`))), join(directory, 'node_modules', name), { recursive: true })
   }
   await cp(dirname(dirname(fileURLToPath(import.meta.resolve('birpc')))), join(directory, 'node_modules/birpc'), { recursive: true })
   const source = `import {Socket} from 'node:net';import {runNodeMain} from ${JSON.stringify(pathToFileURL(join(directory, 'process.ts')).href)};await runNodeMain(new Socket({fd:7,readable:true,writable:true}),100000,process);`
@@ -36,6 +41,7 @@ it('boots an unbuilt source closure outside the workspace and exchanges tool rep
         code: 'const answer = await tools.echo({ n: 21 }); return { answer, env: { ...process.env } }',
         namespaces: [{ global: 'tools', names: ['echo'] }],
         maxOutputBytes: 10_000,
+        retainsState: false,
       }).then((result) => {
         if (result.error) completed.reject(new Error(result.error.message))
         else completed.resolve(decodePtcJsonWire(result.value))
@@ -49,15 +55,7 @@ it('boots an unbuilt source closure outside the workspace and exchanges tool rep
     outputLimit() {},
   }, [], (error) => { completed.reject(error) })
   onTestFinished(async () => { channel.$close(); child.kill(); await finished })
-  const outcome = await completed.promise as { answer: number, env: Record<string, string> }
-  expect(outcome.answer).toBe(42)
-  // CoreFoundation initializes __CF_USER_TEXT_ENCODING independently on a macOS child.
-  const expected = { ...programSpawnEnvironment() }
-  for (const key of Object.keys(outcome.env)) {
-    if (key === '__CF_USER_TEXT_ENCODING') continue
-    expect(expected[key]).toBe(outcome.env[key])
-  }
-  expect(Object.keys(outcome.env).length).toBe(Object.keys(expected).length + (outcome.env.__CF_USER_TEXT_ENCODING === undefined ? 0 : 1))
+  expect(await completed.promise).toEqual({ answer: 42, env: { ...programSpawnEnvironment() } })
   channel.$close()
   await finished
 })
