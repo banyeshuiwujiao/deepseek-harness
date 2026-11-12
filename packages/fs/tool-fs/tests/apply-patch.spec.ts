@@ -11,7 +11,7 @@ import type { PtcRunRequest, PtcRunSpec } from '@deepseek-ai/dsh-ptc-runtime'
 import { add, move, patch, remove, setup, update } from './patch/harness.ts'
 
 const guidance = 'Prefer apply_patch over separate edit calls for changes across files or separated regions. '
-  + 'Read a file before updating, deleting, or moving it (the default fs-observation-policy requires it), unless you just created or edited it in this session. '
+  + 'Give every hunk enough surrounding context lines to match one place in the current file. '
   + 'The whole patch is checked first (syntax, hunk matching, missing files) and a rejected patch changes nothing; once applying starts, operations run in order, stop at the first failure, and are not rolled back, so re-read affected files before retrying when needed.'
 
 type Fixture = Awaited<ReturnType<typeof setup>>
@@ -27,7 +27,7 @@ it('omits patch registration and guidance when disabled', async () => {
 
 it('registers patch guidance when enabled and removes tool and section on disposal', async () => {
   const t = await setup()
-  expect(t.ctx.tools.get('apply_patch')?.description).toBe('Create, update, delete, or move UTF-8 text files with one Codex-style patch; '
+  expect(t.ctx.tools.get('apply_patch')?.description).toBe('Create, update, delete, or move UTF-8 text files with one patch; '
     + 'prefer it over multiple edit calls when a change spans several files or separated regions.')
   const key = {}
   let scope!: Scope
@@ -163,7 +163,7 @@ class PatchPtcRuntime extends PtcRuntime {
     return { ...request, cwd: request.cwd ?? process.cwd(), timeoutMs: request.timeoutMs ?? 120_000 }
   }
   async run(request: PtcRunSpec) {
-    return { logs: [], value: await request.bindings[0]!.functions.apply_patch!({ input: this.patch }) }
+    return { output: [{ type: 'text' as const, text: JSON.stringify(await request.bindings[0]!.functions.apply_patch!({ input: this.patch })) }] }
   }
 }
 
@@ -179,10 +179,10 @@ it('dispatches native and PTC patch calls with identical values', async () => {
   await t.file('a', 'old\n')
   const ptc = await executeModelToolFixture(p.ctx, {
     signal: p.exec.signal, callId: p.exec.callId, agent: { ctx: p.ctx, session: { header: { cwd: t.workspace }, append() {} } } as never,
-    name: 'run_code', arguments: { code: 'return await tools.apply_patch({patch})', description: 'Apply the fixture patch' },
+    name: 'run_code', arguments: { code: 'inspect(JSON.stringify(await tools.apply_patch({patch})))', description: 'Apply the fixture patch' },
   })
   if (ptc.isError) throw new Error(JSON.stringify(ptc))
-  expect(ptc.value).toEqual({ logs: [], result: native.value })
+  expect(ptc.value).toEqual({ logs: [JSON.stringify(native.value)] })
   expect(await t.bytes('a')).toBe('new\n')
 })
 

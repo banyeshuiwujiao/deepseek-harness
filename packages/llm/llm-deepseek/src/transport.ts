@@ -1,6 +1,7 @@
 /** Normalize HTTP and in-band Messages errors into provider-neutral failures. */
 
 import { isContextWindowExceededError, isQuotaExceededError, LlmError, ProviderRequestId } from '@deepseek-ai/dsh-llm'
+import type { BuiltinLlmFailureCode } from '@deepseek-ai/dsh-llm'
 
 /** Read only provider error fields used by bounded Files recovery.
  * @param raw - decoded HTTP error response.
@@ -25,7 +26,7 @@ export function providerError(raw: unknown, status: number | undefined, headers?
   const message = typeof error.message === 'string' ? error.message : `DeepSeek Messages request failed (${status ?? 'stream error'})`
   const type = typeof error.type === 'string' ? error.type : ''
   const detail = `${type} ${typeof error.code === 'string' ? error.code : ''} ${message}`
-  let code: string
+  let code: BuiltinLlmFailureCode
   if (status === 401 || status === 403 || ['authentication_error', 'permission_error'].includes(type)) code = 'AUTH'
   // The provider's own classification wins over the wording of the code it
   // reuses: gateways answer TPM/RPM ceilings with 429 + `insufficient_quota`
