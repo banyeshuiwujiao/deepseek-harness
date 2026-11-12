@@ -36,6 +36,11 @@ export function mapUsage(usage: PiUsage): TokenUsage {
 // The body can quote another hop's status, such as a gateway 500 that embeds its
 // upstream's 401, so when a message leads with a status the status rules read
 // only that status; other wordings scan the whole message.
+/** The provider's own error type for a throughput rejection. Gateways reuse
+ * `insufficient_quota` for TPM/RPM ceilings, so the provider's `type` field
+ * decides whether a 429 is a retryable rate limit or an exhausted balance. */
+const PROVIDER_RATE_LIMIT_TYPE = /["']type["']\s*:\s*["']rate_limit_(?:error|exceeded)["']/i
+
 const LEADING_HTTP_STATUS = /^[45]\d\d\b/
 
 // XXX(pi-ai upstream): pi-ai flattens the caught error to `error.message`
@@ -49,6 +54,10 @@ const LEADING_HTTP_STATUS = /^[45]\d\d\b/
 function classifyPiAiError(message: string): BuiltinLlmFailureCode {
   const statusSource = LEADING_HTTP_STATUS.exec(message)?.[0] ?? message
   if (/\b(?:401|403)\b/.test(statusSource)) return 'AUTH'
+  // The provider's own classification wins over the wording of the code it
+  // reuses: a 429 typed as a rate limit must not be reported as an exhausted
+  // quota, or the turn dies instead of retrying under the RATE_LIMIT policy.
+  if (PROVIDER_RATE_LIMIT_TYPE.test(message)) return 'RATE_LIMIT'
   if (isQuotaExceededError(message)) return QUOTA_EXCEEDED_CODE
   if (/\b429\b/.test(statusSource) || /rate.?limit/i.test(message)) return 'RATE_LIMIT'
   // A rejected request body (gateway or provider size cap): resending the
